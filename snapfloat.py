@@ -510,6 +510,7 @@ QFrame#screen { background: @input; border: 1px solid @border; border-radius: 7p
 QToolButton#corner { background: @border; border: none; border-radius: 4px; }
 QToolButton#corner:hover { background: @muted; }
 QToolButton#corner:checked { background: @accent; }
+QLabel#warn { background: rgba(255, 176, 32, 0.18); border: 1px solid #ffb020; border-radius: 10px; padding: 10px 12px; }
 """
 
 
@@ -633,6 +634,9 @@ class Settings(QDialog):
         header.addSpacing(6)
         header.addLayout(titles, 1)
         root.addLayout(header)
+        if WAYLAND and not gnome_ext_active():
+            root.addWidget(QLabel("⚠  Thumbnails open in the middle until the SnapFloat GNOME extension is active. "
+                                  "<b>Log out and back in once</b> after installing.", objectName="warn", wordWrap=True))
 
         root.addWidget(self.card("Thumbnail", [
             ("Show for", "Hovering pauses it", self.seconds),
