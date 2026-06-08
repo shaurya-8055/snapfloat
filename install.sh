@@ -26,7 +26,8 @@ dpkg -s python3-venv libxcb-cursor0 >/dev/null 2>&1 || sudo apt-get install -y p
 mkdir -p "$DIR" "$(dirname "$BIN")" "$(dirname "$APPS")"
 cp "$SRC/snapfloat.py" "$DIR/"
 [ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv"
-"$DIR/venv/bin/pip" install -q --upgrade -r "$SRC/requirements.txt"
+# PySide6 6.9 is pinned (newer versions draw no drag image on Wayland) but predates Python 3.14; its abi3 wheel runs fine there
+"$DIR/venv/bin/pip" install -q --upgrade --ignore-requires-python -r "$SRC/requirements.txt"
 
 printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$DIR/venv/bin/python" "$DIR/snapfloat.py" > "$BIN"
 chmod +x "$BIN"

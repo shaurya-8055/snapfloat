@@ -36,6 +36,7 @@ export default class SnapFloatExtension extends Extension {
         this._signals.set(win, [
             win.connect('notify::title', () => this._place(win)), // re-stack after a thumb closes
             win.connect('shown', () => this._place(win)), // after mutter's own placement, so ours sticks
+            win.connect('size-changed', () => this._place(win)), // a crop in markup resizes it: re-anchor to the corner
         ]);
         win.connect('unmanaged', () => {
             this._signals.delete(win);
