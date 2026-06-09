@@ -90,4 +90,51 @@ assert th not in app.thumbs
 
 app.clear_recent()
 assert all(p.exists() for p in (x.path for x in app.thumbs))
+
+# beyond macOS: private-info finder, numbered steps, beautify, combine
+tsv = "\n".join(["level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                 "5\t1\t1\t1\t1\t1\t10\t20\t60\t20\t95\tCall", "5\t1\t1\t1\t1\t2\t80\t20\t40\t20\t95\tme:",
+                 "5\t1\t1\t1\t1\t3\t130\t20\t50\t20\t95\t+91", "5\t1\t1\t1\t1\t4\t190\t20\t90\t20\t95\t98765",
+                 "5\t1\t1\t1\t1\t5\t290\t20\t90\t20\t95\t43210",
+                 "5\t1\t1\t1\t2\t1\t10\t60\t300\t20\t95\tme@example.com",
+                 "5\t1\t1\t1\t3\t1\t10\t100\t80\t20\t95\tOrder", "5\t1\t1\t1\t3\t2\t100\t100\t60\t20\t95\t#4821",
+                 "5\t1\t1\t1\t3\t3\t170\t100\t50\t20\t95\t2026"])
+boxes = sf.private_boxes(tsv, 2)
+assert len(boxes) == 2, boxes  # the phone number (3 words) and the email; "#4821 2026" stays readable
+for text, private in (("482913", True), ("4111 1111 1111 1111", True), ("(555) 123-4567", True), ("+44 20 7946", True),
+                      ("4821 2026", False), ("12/10/2026", False)):
+    m = sf.NUMBER.search(text)
+    assert bool(m and sf.is_private_number(m)) == private, text
+assert boxes[0].toRect() == QRectF(65, 10, 125, 10).adjusted(-4, -4, 4, 4).toRect(), boxes[0]
+assert boxes[1].toRect() == QRectF(5, 30, 150, 10).adjusted(-4, -4, 4, 4).toRect(), boxes[1]
+cv.shapes.clear()
+cv.push(dict(t="step", at=QPointF(200, 150), n=1, c="#0a84ff", size=20))
+cv.push(dict(t="blur", rs=[QRectF(0, 0, 60, 60), QRectF(300, 200, 60, 60)], r=QRectF(0, 0, 60, 60), c="#000", w=1))
+out = cv.render()
+assert out.pixelColor(200, 135).blue() > 200, "step badge drawn in its colour"
+assert out.pixelColor(301, 201) == out.pixelColor(306, 206), "multi-box blur covers every box"
+cv.undo()
+assert out.size() == cv.render().size() and len(cv.shapes) == 1, "one undo removes all auto-blurred boxes"
+nice = sf.beautify(QPixmap.fromImage(img))
+assert nice.width() > img.width() + 90 and nice.toImage().pixelColor(2, 2) != QColor("white")
+both = sf.combine([QPixmap.fromImage(img), QPixmap.fromImage(img)])
+assert both.size().toTuple() == (400, 300 * 2 + 16)
+
+# private temp folder, start-at-login default
+assert (sf.TMP.stat().st_mode & 0o777) == 0o700, oct(sf.TMP.stat().st_mode)
+assert app.cfg.autostart is True and (sf.Path.home() / ".config/autostart/snapfloat.desktop").exists()
+
+# uninstall removes everything install.sh and the app created (GNOME calls disabled: never touch the real desktop)
+home = sf.Path.home()
+for f in (".local/bin/snapfloat", ".local/share/applications/snapfloat.desktop", ".local/share/snapfloat/venv/x",
+          f".local/share/gnome-shell/extensions/{sf.EXT_UUID}/extension.js"):
+    (home / f).parent.mkdir(parents=True, exist_ok=True)
+    (home / f).write_text("x")
+real_which, sf.shutil.which = sf.shutil.which, lambda name: None
+try:
+    sf.uninstall(quit_running=False)
+finally:
+    sf.shutil.which = real_which
+left = [str(p.relative_to(home)) for p in home.rglob("*") if "snapfloat" in str(p).lower() and p.is_file()]
+assert not left and not sf.TMP.exists(), left
 print("ok")

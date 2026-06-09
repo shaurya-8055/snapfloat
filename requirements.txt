@@ -1,2 +1,3 @@
-# 6.10+ sends an empty drag image on Wayland, so the dragged thumbnail would be invisible
+# Pinned below 6.10: newer PySide6 sends an empty drag image on Wayland, so the dragged thumbnail would be invisible.
+# 6.9 predates Python 3.14 but its abi3 wheel runs fine there; install with: pip install --ignore-requires-python -r requirements.txt
 PySide6-Essentials>=6.9,<6.10

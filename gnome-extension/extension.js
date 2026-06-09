@@ -38,11 +38,11 @@ export default class SnapFloatExtension extends Extension {
             win.connect('shown', () => this._place(win)), // after mutter's own placement, so ours sticks
             win.connect('size-changed', () => this._place(win)), // a crop in markup resizes it: re-anchor to the corner
         ]);
-        win.connect('unmanaged', () => {
+        this._signals.get(win).push(win.connect('unmanaged', () => {
             this._signals.delete(win);
             this._fresh.delete(win);
             this._placed.delete(win);
-        });
+        }));
         this._fresh.set(win, {at: GLib.get_monotonic_time(), prev: global.display.focus_window});
     }
 
