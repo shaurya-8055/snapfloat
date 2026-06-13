@@ -115,6 +115,14 @@ assert out.pixelColor(200, 135).blue() > 200, "step badge drawn in its colour"
 assert out.pixelColor(301, 201) == out.pixelColor(306, 206), "multi-box blur covers every box"
 cv.undo()
 assert out.size() == cv.render().size() and len(cv.shapes) == 1, "one undo removes all auto-blurred boxes"
+# "copy text from an area": a selection, never drawn into the screenshot
+picked = []
+ed.copy_text_area = picked.append
+before = len(cv.shapes)
+cv.cur = dict(t="ocr", a=QPointF(10, 10), b=QPointF(200, 120), r=QRectF(10, 10, 190, 110), c="#000", w=1,
+              path=sf.QPainterPath(QPointF(10, 10)))
+cv.mouseReleaseEvent(None)
+assert picked == [QRectF(10, 10, 190, 110)] and len(cv.shapes) == before
 nice = sf.beautify(QPixmap.fromImage(img))
 assert nice.width() > img.width() + 90 and nice.toImage().pixelColor(2, 2) != QColor("white")
 both = sf.combine([QPixmap.fromImage(img), QPixmap.fromImage(img)])

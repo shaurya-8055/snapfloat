@@ -6,7 +6,7 @@ Take a screenshot and a thumbnail floats in the corner of your screen. Drag it s
 Nothing is saved to your Screenshots folder, so there's no pile of old screenshots to clean up later.
 
 <p align="center"><img src="docs/demo.gif" width="760" alt="SnapFloat demo: press PrtSc, mark up and hide private info, drag into a chat"></p>
-<p align="center"><a href="docs/snapfloat-demo.mp4">▶ Watch the demo video (MP4)</a></p>
+<p align="center"><a href="docs/snapfloat-demo.mp4">▶ Watch the 70-second tour with voiceover (MP4, 1080p, English captions)</a> · <a href="docs/snapfloat-demo.srt">captions (.srt)</a></p>
 
 ---
 
@@ -53,7 +53,7 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 | Feature | How |
 |---|---|
 | **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and blurs them. One `Ctrl+Z` brings them back |
-| **Copy text from a screenshot** | Right-click → *Copy text*, or the copy button in markup (OCR) |
+| **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR) |
 | **Blur** | A real redaction tool. Mac markup has no blur |
 | **Numbered steps** | Markup tool `N`: click to drop 1, 2, 3… badges for how-to guides |
 | **Beautify** | Right-click → *Beautify*: gradient background, rounded corners and shadow, ready for social media |
@@ -139,10 +139,11 @@ Click a thumbnail to open the editor. **Done** updates the thumbnail, its file a
 | Highlighter | `H` | Mark text, like a marker pen |
 | Text | `T` | Click, type, press `Enter` (`Esc` drops it) |
 | Numbered steps | `N` | Click to place 1, 2, 3… badges |
+| Copy text from an area | `X` | Drag a box over some text: just that text is copied. Nothing is drawn on the screenshot |
 | Blur | `B` | Drag over phone numbers, emails, OTPs or faces. Uses a coarse mosaic, so the text can't be recovered |
 | Crop | `C` | Drag the area to keep |
 
-Toolbar buttons: **👁 Hide private info** (auto-blurs emails, phone numbers, OTPs, card numbers; one undo restores them) and **Copy text**.
+Toolbar buttons: **👁 Hide private info** (auto-blurs emails, phone numbers, OTPs, card numbers; one undo restores them) and **Copy text** (all of it; use the `X` tool for just a part).
 
 `Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Enter` done · `Esc` cancel. Pick a colour from the swatches; line widths match what you see on screen.
 
