@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SnapFloat
+Comment=Floating screenshot thumbnail you can drag into any app (made by Shaurya Shakya)
+Exec=snapfloat
+Icon=snapfloat
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;thumbnail;markup;

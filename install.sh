@@ -19,6 +19,8 @@ fi
 dpkg -s python3-venv libxcb-cursor0 tesseract-ocr >/dev/null 2>&1 || sudo apt-get install -y python3-venv libxcb-cursor0 tesseract-ocr
 mkdir -p "$DIR" "$(dirname "$BIN")" "$(dirname "$APPS")"
 cp "$SRC/snapfloat.py" "$DIR/"
+mkdir -p "$HOME/.local/share/icons/hicolor/256x256/apps"
+cp "$SRC/packaging/snapfloat.png" "$HOME/.local/share/icons/hicolor/256x256/apps/snapfloat.png"
 [ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv"
 # PySide6 6.9 is pinned (newer versions draw no drag image on Wayland) but predates Python 3.14; its abi3 wheel runs fine there
 "$DIR/venv/bin/pip" install -q --upgrade --ignore-requires-python -r "$SRC/requirements.txt"
@@ -31,7 +33,7 @@ Type=Application
 Name=SnapFloat
 Comment=Floating screenshot thumbnail you can drag into any app
 Exec=$BIN
-Icon=camera-photo
+Icon=snapfloat
 Categories=Utility;
 DESKTOP
 
