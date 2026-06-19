@@ -290,7 +290,7 @@ Contributions are welcome: bug reports, fixes, and features from the roadmap.
 - [x] Copy text (OCR), one-click hide private info, numbered steps, beautify, combine, drag all
 - [x] One-key capture with `PrtSc`
 - [x] AppImage, Scoop
-- [ ] winget, Flathub
+- [ ] winget: submitted, in review ([microsoft/winget-pkgs#455524](https://github.com/microsoft/winget-pkgs/pull/455524))
 - [ ] KDE Plasma: corner placement via a KWin script
 - [ ] GNOME extension on extensions.gnome.org (submitted, in review: [SnapFloat](https://extensions.gnome.org/extension/11361/snapfloat/))
 
