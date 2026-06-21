@@ -9,33 +9,35 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --noconsole --name SnapFloat snapfloat.py
-      - uses: softprops/action-gh-release@v2
+      - run: pip install -r requirements.txt pyinstaller pillow
+      - run: pyinstaller --onefile --noconsole --name SnapFloat --icon packaging/snapfloat.png snapfloat.py
+      - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: dist/SnapFloat.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SnapFloat-windows
           path: dist/SnapFloat.exe
   linux:
     runs-on: ubuntu-22.04  # oldest glibc we build on = widest range of distros the AppImage runs on
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      # Qt's X11 plugin needs these; installed here so PyInstaller bundles them into the AppImage
+      - run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 libxcb-util1 libxcb-xkb1
       - run: bash packaging/build-appimage.sh
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: dist/SnapFloat-x86_64.AppImage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SnapFloat-linux-appimage
           path: dist/SnapFloat-x86_64.AppImage

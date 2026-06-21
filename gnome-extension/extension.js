@@ -2,6 +2,7 @@
 // Wayland gives apps no say over placement, so the shell does it for them.
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -48,14 +49,16 @@ export default class SnapFloatExtension extends Extension {
 
     _place(win) {
         const m = TITLE.exec(win.get_title() ?? '');
-        if (!m)
-            return; // settings dialog and friends
+        if (!m || win.get_client_type() !== Meta.WindowClientType.WAYLAND)
+            return; // settings dialog and friends; on X11 the app places its own windows
         const [, corner, offset] = m;
         if (!win.is_above())
             win.make_above();
         if (!win.is_on_all_workspaces())
             win.stick();
-        const area = Main.layoutManager.getWorkAreaForMonitor(global.display.get_current_monitor());
+        // first placement: the monitor you're working on; after that the thumbnail stays on its own monitor
+        const monitor = this._placed.has(win) ? win.get_monitor() : global.display.get_current_monitor();
+        const area = Main.layoutManager.getWorkAreaForMonitor(monitor);
         const r = win.get_frame_rect();
         if (!r.width)
             return; // not mapped yet: 'shown' will call us again
@@ -80,7 +83,8 @@ export default class SnapFloatExtension extends Extension {
         if (!fresh)
             return;
         this._fresh.delete(win);
-        if (TITLE.test(win.get_title() ?? '') && GLib.get_monotonic_time() - fresh.at < FRESH_US && fresh.prev && fresh.prev !== win)
+        if (TITLE.test(win.get_title() ?? '') && GLib.get_monotonic_time() - fresh.at < FRESH_US && fresh.prev && fresh.prev !== win &&
+            this._signals.has(fresh.prev)) // still managed (tracked windows drop out when they close)
             fresh.prev.activate(global.get_current_time());
     }
 }

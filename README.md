@@ -36,7 +36,7 @@ macOS fixed this years ago with its floating thumbnail. SnapFloat brings the sam
 - **Floating thumbnail**, smooth slide-in, in the corner you choose
 - **Drag & drop** into any app (it's also copied to the clipboard, so `Ctrl+V` works too)
 - **Auto-dismiss** after N seconds, with a countdown bar; hovering pauses it, `0` keeps it until you close it
-- **Quick markup:** click the thumbnail to add arrows, boxes, highlighter, text, crop, and **blur to hide phone numbers, emails or OTPs** before you send
+- **Quick markup:** click the thumbnail to add arrows, boxes, ellipses, pen, highlighter, text, spotlight, crop, and **blur to hide phone numbers, emails or OTPs** before you send
 - **Flick to dismiss:** throw the thumbnail toward the screen edge, like on a Mac
 - **Recent screenshots** in the tray menu: grab one again after its thumbnail is gone
 - **Delayed capture** (3, 5 or 10 seconds) with a countdown ring, for menus and hover states
@@ -56,6 +56,7 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 | **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR) |
 | **Blur** | A real redaction tool. Mac markup has no blur |
 | **Numbered steps** | Markup tool `N`: click to drop 1, 2, 3… badges for how-to guides |
+| **Spotlight** | Markup tool `S`: darken everything except the part that matters |
 | **Beautify** | Right-click → *Beautify*: gradient background, rounded corners and shadow, ready for social media |
 | **Combine** | Right-click → *Combine all into one*: several screenshots become one image to send |
 | **Drag all at once** | Hold `Shift` while dragging: every visible screenshot goes in one drop |
@@ -63,16 +64,17 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 | **Smaller files** | Send a compact JPG instead of a huge PNG |
 | **One-key capture** | `PrtSc` for a region, `Shift+PrtSc` for the whole screen |
 
-*Hide private info* and *Copy text* use the free [Tesseract](https://github.com/tesseract-ocr/tesseract) OCR engine. `install.sh` installs it on Ubuntu/Debian; without it those two options are greyed out. Everything runs on your computer and nothing is uploaded.
+*Hide private info* and *Copy text* use the free [Tesseract](https://github.com/tesseract-ocr/tesseract) OCR engine. `install.sh` installs it on Ubuntu/Debian; on Windows install it with `winget install UB-Mannheim.TesseractOCR`. Without it those two options are greyed out. Everything runs on your computer and nothing is uploaded.
 
 ## Install
 
 ### Windows
-**With [Scoop](https://scoop.sh)** (updates with `scoop update snapfloat`):
+**With [Scoop](https://scoop.sh):**
 ```powershell
 scoop bucket add snapfloat https://github.com/shaurya-8055/scoop-bucket
 scoop install snapfloat
 ```
+To update: quit SnapFloat from the tray first (Scoop won't replace a running app), then `scoop update snapfloat`.
 **Or by hand:**
 1. Download `SnapFloat.exe` from [Releases](https://github.com/shaurya-8055/snapfloat/releases).
 2. Run it. It sits in the system tray (click `^` near the clock if you don't see it).
@@ -88,7 +90,11 @@ scoop install snapfloat
    ```
 3. On GNOME, **log out and back in once**: SnapFloat installs its small GNOME extension on first run, and GNOME loads it at login.
 
-It starts at login from then on. For *Copy text* and *Hide private info*, also install Tesseract (`sudo apt install tesseract-ocr`, `sudo dnf install tesseract`). If your system lacks FUSE, run it with `--appimage-extract-and-run`.
+It starts at login from then on. Also install:
+- **Tesseract**, for *Copy text* and *Hide private info*: `sudo apt install tesseract-ocr` / `sudo dnf install tesseract`
+- **wl-clipboard**, so *Copy to clipboard* works on Wayland: `sudo apt install wl-clipboard` / `sudo dnf install wl-clipboard`
+
+If your system lacks FUSE, run it with `--appimage-extract-and-run`.
 
 ### Ubuntu / Debian (GNOME), from source
 ```sh
@@ -97,18 +103,16 @@ cd snapfloat
 ./install.sh
 ```
 Then **log out and back in once**. This activates the small GNOME Shell extension that keeps thumbnails in the corner (see [Platform notes](#platform-notes)).
-The installer also registers the shortcuts in *Settings → Keyboard → Custom Shortcuts*. Run `./install.sh` again to update.
+SnapFloat registers its shortcuts in *Settings → Keyboard → Custom Shortcuts* when it starts. Run `./install.sh` again to update.
 
 ### Other Linux desktops (KDE, XFCE, …)
-```sh
-pip install --ignore-requires-python -r requirements.txt
-python3 snapfloat.py
-```
-Then bind these commands in your desktop's keyboard settings:
+The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then bind these commands in your desktop's keyboard settings:
 | Command | Suggested key |
 |---|---|
-| `python3 /path/to/snapfloat.py --region` | `Ctrl+Shift+4` |
-| `python3 /path/to/snapfloat.py --screen` | `Ctrl+Shift+3` |
+| `/path/to/SnapFloat-x86_64.AppImage --region` | `PrtSc` or `Ctrl+Shift+4` |
+| `/path/to/SnapFloat-x86_64.AppImage --screen` | `Shift+PrtSc` or `Ctrl+Shift+3` |
+
+(Running from source instead: see [Build from source](#build-from-source), then use `/path/to/.venv/bin/python /path/to/snapfloat.py --region`.)
 
 ### Requirements
 - Python 3.9+ (not needed for the Windows exe)
@@ -152,9 +156,12 @@ Click a thumbnail to open the editor. **Done** updates the thumbnail, its file a
 |---|---|---|
 | Arrow | `A` | Point at something |
 | Box | `R` | Frame an area |
+| Ellipse | `E` | Circle something |
+| Pen | `P` | Draw freehand |
 | Highlighter | `H` | Mark text, like a marker pen |
 | Text | `T` | Click, type, press `Enter` (`Esc` drops it) |
 | Numbered steps | `N` | Click to place 1, 2, 3… badges |
+| Spotlight | `S` | Drag over what matters: everything else darkens (several spotlights combine; arrows and text stay bright) |
 | Copy text from an area | `X` | Drag a box over some text: just that text is copied. Nothing is drawn on the screenshot |
 | Blur | `B` | Drag over phone numbers, emails, OTPs or faces. Uses a coarse mosaic, so the text can't be recovered |
 | Crop | `C` | Drag the area to keep |
@@ -195,7 +202,7 @@ Open from the tray icon → **Settings…**
 Settings are stored in `~/.config/snapfloat/snapfloat.conf` (Linux) or the registry under `HKCU\Software\snapfloat` (Windows).
 
 ## Privacy: where screenshots go
-- Screenshots are written to a private temp folder (`/tmp/snapfloat-<user>` or `%TEMP%\snapfloat-<user>`).
+- Screenshots are written to a private, owner-only folder: your session's runtime folder on Linux (`/run/user/<id>/snapfloat`, which other users can't see and which is cleared at logout) or `%TEMP%\snapfloat-<user>` on Windows.
 - The last 10 stay there so *Recent* can bring them back; older ones are deleted as new ones arrive. All of them are deleted when SnapFloat quits.
 - Nothing goes to your Screenshots folder unless you click **Save** or turn on *Save when it disappears*.
 - SnapFloat makes no network connections.
@@ -218,7 +225,7 @@ Wayland is stricter than X11, which is the main reason a tool like this didn't e
 | Problem | Fix |
 |---|---|
 | Settings says the extension is out of date (after a GNOME upgrade) | Update SnapFloat (`git pull && ./install.sh`) and log out and back in |
-| Thumbnail appears in the middle of the screen (GNOME) | Log out and back in once after installing. Check with `gnome-extensions info snapfloat@shaurya-8055.github.io` (should say `ACTIVE`) |
+| Thumbnail appears in the middle of the screen (GNOME) | Log out and back in once after installing. Check with `gnome-extensions info snapfloat@shaurya-8055.github.io` (should say `State: ACTIVE`, or `ENABLED` on GNOME 45) |
 | Shortcut does nothing (GNOME) | Check *Settings → Keyboard → Custom Shortcuts* for "SnapFloat region". Another shortcut may use the same keys |
 | `Ctrl+Shift+3` (full screen) does nothing on Wayland, but region capture works | GNOME needs permission for silent screenshots and can't ask a tray app. Re-run `./install.sh`, or run `gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot snapfloat "['yes']"` |
 | No tray icon (GNOME) | Needs the AppIndicator extension (enabled by default on Ubuntu; on Fedora install *AppIndicator and KStatusNotifierItem Support*) |
@@ -231,8 +238,13 @@ Debug logs: run `snapfloat` from a terminal. For drag & drop details: `QT_LOGGIN
 ## Uninstall
 The easiest way on any system: **Settings → Uninstall…**. It removes the shortcuts, autostart entry, settings, GNOME extension and temporary screenshots, then quits. Screenshots you saved are not touched.
 
-- **Linux, from a terminal:** `snapfloat --uninstall` (or `./install.sh --uninstall` from the cloned folder)
-- **Windows:** after *Settings → Uninstall…* (or `SnapFloat.exe --uninstall`), delete `SnapFloat.exe`. This also removes its *Start at login* registry entry and its settings under `HKCU\Software\snapfloat`.
+- **Linux, installed with `install.sh`:** `snapfloat --uninstall` (or `./install.sh --uninstall` from the cloned folder)
+- **Linux, AppImage:** `./SnapFloat-x86_64.AppImage --uninstall`, then delete the file
+- **Windows, Scoop:** `scoop uninstall snapfloat` (it runs SnapFloat's own uninstall first)
+- **Windows, winget:** first *Settings → Uninstall…* (winget can't run SnapFloat's cleanup itself), then `winget uninstall ShauryaShakya.SnapFloat`
+- **Windows, by hand:** *Settings → Uninstall…* (or `SnapFloat.exe --uninstall`), then delete `SnapFloat.exe`
+
+Uninstalling also gives the `PrtSc` keys back exactly as they were, and removes the *Start at login* entry and the settings (`HKCU\Software\snapfloat` on Windows).
 
 ## Build from source
 ```sh
@@ -259,7 +271,7 @@ gnome-extension/          GNOME Shell extension: corner placement + focus handli
 install.sh                Linux installer / updater / uninstaller
 packaging/                icon, desktop entry, AppImage build script
 test_snapfloat.py         smoke test (runs without a display)
-.github/workflows/        Windows exe build on release
+.github/workflows/        on a version tag: builds the Windows exe and the Linux AppImage for the release
 ```
 
 ## Contributing

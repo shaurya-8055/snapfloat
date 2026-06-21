@@ -12,8 +12,14 @@ HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/snapfloat" "$@"
 RUN
 chmod +x AppDir/AppRun
-if [ ! -x appimagetool ]; then
-    curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-    chmod +x appimagetool
-fi
-ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir dist/SnapFloat-x86_64.AppImage
+# pinned tool and runtime, checked by hash: a release build must not change because "continuous" moved
+fetch() {  # url file sha256
+    [ -f "$2" ] || curl -fsSL -o "$2" "$1"
+    echo "$3  $2" | sha256sum -c --quiet || { rm -f "$2"; echo "checksum mismatch: $2" >&2; exit 1; }
+}
+fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage appimagetool \
+    ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+fetch https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 appimage-runtime \
+    2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+chmod +x appimagetool
+ARCH=x86_64 ./appimagetool --appimage-extract-and-run --runtime-file appimage-runtime AppDir dist/SnapFloat-x86_64.AppImage
