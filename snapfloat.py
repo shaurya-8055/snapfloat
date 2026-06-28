@@ -189,11 +189,12 @@ from PySide6.QtCore import (QAbstractAnimation, QCoreApplication, QEasingCurve, 
                             QPointF, QPropertyAnimation, QProcess, QRect, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, QUrl,
                             QVariantAnimation, Signal, Slot, SLOT, qVersion)
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QDrag, QFont, QGuiApplication, QIcon, QImage, QImageReader,
-                           QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF)
+                           QFontMetricsF, QKeySequence, QLinearGradient, QPainter, QPainterPath,
+                           QPainterPathStroker, QPen, QPixmap, QPolygonF)
 from shiboken6 import isValid
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSlider, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
 
 DEFAULTS = dict(seconds=6, corner="bottom-right", size=220, copy=True, save=False,
                 folder=str(Path.home() / "Pictures" / "Screenshots"), region_key="Ctrl+Shift+4",
@@ -480,12 +481,15 @@ class Countdown(QWidget):
 
 # ---------- markup ----------
 
-TOOLS = [("arrow", "Arrow", "A"), ("rect", "Box", "R"), ("ellipse", "Ellipse", "E"), ("pen", "Pen", "P"),
-         ("highlight", "Highlighter", "H"), ("text", "Text", "T"), ("step", "Numbered steps", "N"),
+TOOLS = [("select", "Select: move a mark, Delete removes it", "V"), ("arrow", "Arrow", "A"), ("rect", "Box", "R"),
+         ("ellipse", "Ellipse", "E"), ("pen", "Pen", "P"), ("highlight", "Highlighter", "H"), ("text", "Text", "T"),
+         ("step", "Numbered steps", "N"), ("magnify", "Magnifier: drag from the centre outwards", "M"),
          ("spotlight", "Spotlight: darken everything else", "S"), ("blur", "Blur: hide private info", "B"), ("crop", "Crop", "C"),
+         ("picker", "Pick a colour from the screenshot (copies its hex)", "I"),
          ("ocr", "Copy text from an area: drag a box over it", "X")]
 COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]
 TEXT_PX = 22  # on-screen text size while typing; stored in image pixels so it looks the same after export
+SCALES = (0.5, 0.75, 1, 1.5, 2, 3)  # [ and ] step through these mark sizes
 
 
 def pixelate(img, r):
@@ -518,39 +522,105 @@ def draw_arrow(p, a, b, c, w):
     p.drawPolygon(QPolygonF([b] + tips))
 
 
-def draw_text(p, at, text, c, size):
+def text_font(size):
     f = QFont()
     f.setPixelSize(max(1, round(size)))
     f.setBold(True)
+    return f
+
+
+def draw_text(p, at, text, c, size):
+    """Bold, outlined text; `at` is the first line's baseline. Several lines are stacked by the font's line spacing."""
+    f = text_font(size)
+    step = QFontMetricsF(f).lineSpacing()
     path = QPainterPath()
-    path.addText(at, f, text)
+    for i, line in enumerate(text.split("\n")):
+        path.addText(QPointF(at.x(), at.y() + i * step), f, line)
     outline = QColor(0, 0, 0, 170) if c.lightness() > 100 else QColor(255, 255, 255, 210)
     p.strokePath(path, QPen(outline, size / 7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
     p.fillPath(path, c)
 
 
-def paint_shapes(p, img, shapes):
-    """Markup in image pixels. Blurs go first: they sample the clean screenshot, and later marks stay crisp on top."""
+def paint_blurs(p, img, shapes):
+    """Redaction boxes, each pixelated once and cached on its shape."""
     for s in shapes:
-        if s["t"] == "blur":
-            for rr in s.get("rs") or [s["r"]]:  # "Hide private info" stores all its boxes in one shape: one undo
-                r = rr.toRect().intersected(img.rect())
-                if r.width() > 1 and r.height() > 1:
-                    key = (r.x(), r.y(), r.width(), r.height())
-                    cache = s.setdefault("_px", {})
-                    if key not in cache:  # pixelate once per box, not on every repaint
-                        if len(cache) > 64:  # a box still being dragged out creates a new key per mouse move
-                            cache.clear()
-                        cache[key] = pixelate(img, r)
-                    p.drawImage(r.topLeft(), cache[key])
+        if s["t"] != "blur":
+            continue
+        for rr in s.get("rs") or [s["r"]]:  # "Hide private info" stores all its boxes in one shape: one undo
+            r = rr.toRect().intersected(img.rect())
+            if r.width() > 1 and r.height() > 1:
+                key = (r.x(), r.y(), r.width(), r.height())
+                cache = s.setdefault("_px", {})
+                if key not in cache:
+                    if len(cache) > 64:  # a box still being dragged out creates a new key per mouse move
+                        cache.clear()
+                    cache[key] = pixelate(img, r)
+                p.drawImage(r.topLeft(), cache[key])
+
+
+def callout_rect(s):
+    """A magnifier shows its source circle at 2x in a circle twice as wide, centred on s["at"]."""
+    rad = max(s["r"].width(), s["r"].height())
+    return QRectF(s["at"].x() - rad, s["at"].y() - rad, 2 * rad, 2 * rad)
+
+
+def place_callout(src, img):
+    """Default spot for a magnifier's callout: up and to the right of the source, kept inside the image."""
+    rad = max(src.width(), src.height())
+    c = src.center() + QPointF(rad * 1.6, -rad * 1.6)
+    if c.x() + rad > img.width():
+        c.setX(src.center().x() - rad * 1.6)
+    if c.y() - rad < 0:
+        c.setY(src.center().y() + rad * 1.6)
+    return c
+
+
+def paint_magnifier(p, img, shapes, s):
+    src, out, col = s["r"], callout_rect(s), QColor(s["c"])
+    if src.width() < 2:
+        return
+    p.setPen(QPen(col, s["w"]))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(src)
+    line = QLineF(src.center(), out.center())
+    if line.length() > src.width() / 2 + out.width() / 2:  # connector between the two rings
+        u = line.unitVector()
+        d = QPointF(u.dx(), u.dy())
+        p.drawLine(src.center() + d * (src.width() / 2), out.center() - d * (out.width() / 2))
+    clip = QPainterPath()
+    clip.addEllipse(out)
+    p.save()
+    p.setClipPath(clip, Qt.IntersectClip)
+    p.fillPath(clip, QColor("white"))
+    p.translate(out.center())
+    p.scale(2, 2)
+    p.translate(-src.center())
+    d = max(src.width(), src.height())
+    sq = QRectF(src.center() - QPointF(d / 2, d / 2), QSizeF(d, d))
+    p.drawImage(sq, img, sq)  # only the part that shows: cheap even on a 5K shot
+    paint_blurs(p, img, shapes)  # a magnifier must never reveal what a blur hides
+    p.restore()
+    p.setPen(QPen(QColor("white"), s["w"] * 2.2))
+    p.drawEllipse(out)
+    p.setPen(QPen(col, s["w"]))
+    p.drawEllipse(out)
+
+
+def paint_shapes(p, img, shapes):
+    """Markup in image pixels. Blurs first (they sample the clean screenshot), then the spotlight dimming, magnifiers,
+    and the marks, which stay crisp on top."""
+    paint_blurs(p, img, shapes)
     spots = [s for s in shapes if s["t"] == "spotlight"]
-    if spots:  # one dimming pass with a hole per spotlight; marks drawn after it stay bright on top
+    if spots:  # one dimming pass with a hole per spotlight
         dim, holes = QPainterPath(), QPainterPath()
         dim.addRect(QRectF(img.rect()))
         holes.setFillRule(Qt.WindingFill)  # overlapping spotlights stay bright where they overlap
         for sp in spots:
             holes.addRoundedRect(sp["r"], sp["w"] * 2.5, sp["w"] * 2.5)
         p.fillPath(dim.subtracted(holes), QColor(0, 0, 0, 150))
+    for s in shapes:
+        if s["t"] == "magnify":
+            paint_magnifier(p, img, shapes, s)
     for s in shapes:
         t, c = s["t"], QColor(s["c"])
         if t == "rect":
@@ -579,12 +649,81 @@ def paint_shapes(p, img, shapes):
             p.setPen(QPen(QColor(255, 255, 255, 235), rad * 0.14))
             p.setBrush(c)
             p.drawEllipse(s["at"], rad, rad)
-            f = QFont()
-            f.setPixelSize(max(1, round(rad * 1.1)))
-            f.setBold(True)
-            p.setFont(f)
+            p.setFont(text_font(rad * 1.1))
             p.setPen(QColor("black") if c.lightness() > 160 else QColor("white"))
             p.drawText(QRectF(s["at"].x() - rad, s["at"].y() - rad, 2 * rad, 2 * rad), Qt.AlignCenter, str(s["n"]))
+
+
+def shape_bounds(s):
+    """A mark's extent in image pixels (for selecting it and drawing its selection frame)."""
+    t, w = s["t"], s.get("w", 0)
+    if t == "blur":
+        b = QRectF()
+        for r in s.get("rs") or [s["r"]]:
+            b = b.united(r)
+    elif t == "arrow":
+        b = QRectF(s["a"], s["b"]).normalized().adjusted(-w * 4, -w * 4, w * 4, w * 4)
+    elif t in ("pen", "highlight"):
+        b = s["path"].boundingRect()
+    elif t == "text":
+        fm = QFontMetricsF(text_font(s["size"]))
+        lines = s["text"].split("\n")
+        width = max(fm.horizontalAdvance(line) for line in lines)
+        b = QRectF(s["at"].x(), s["at"].y() - fm.ascent(), width, fm.lineSpacing() * (len(lines) - 1) + fm.height())
+    elif t == "step":
+        b = QRectF(s["at"].x() - s["size"], s["at"].y() - s["size"], 2 * s["size"], 2 * s["size"])
+    elif t == "magnify":
+        b = s["r"].united(callout_rect(s))
+    else:
+        b = QRectF(s["r"])
+    return b.adjusted(-w / 2, -w / 2, w / 2, w / 2)
+
+
+def shape_hit(s, pt, tol):
+    """Is `pt` (image pixels) on this mark? Strokes are hit along their line, areas anywhere inside."""
+    t = s["t"]
+    if t == "arrow":
+        a, b = s["a"], s["b"]
+        ab = b - a
+        n = QPointF.dotProduct(ab, ab)
+        k = 0 if n == 0 else max(0.0, min(1.0, QPointF.dotProduct(pt - a, ab) / n))
+        return QLineF(pt, a + ab * k).length() <= tol + s["w"] * 2
+    if t in ("pen", "highlight"):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(s["w"] + 2 * tol)
+        return stroker.createStroke(s["path"]).contains(pt)
+    if t == "magnify":
+        src, out = QPainterPath(), QPainterPath()
+        src.addEllipse(s["r"].adjusted(-tol, -tol, tol, tol))
+        out.addEllipse(callout_rect(s))
+        return src.contains(pt) or out.contains(pt)
+    if t == "blur" and s.get("rs"):
+        return any(r.adjusted(-tol, -tol, tol, tol).contains(pt) for r in s["rs"])
+    return shape_bounds(s).adjusted(-tol, -tol, tol, tol).contains(pt)
+
+
+def shape_moved(s, d):
+    """A copy of the mark shifted by d (shapes are never changed in place, so undo can keep the old ones)."""
+    n = {k: v for k, v in s.items() if k != "_px"}
+    if "r" in n:
+        n["r"] = n["r"].translated(d)
+    if "rs" in n:
+        n["rs"] = [r.translated(d) for r in n["rs"]]
+    for k in ("a", "b", "at"):
+        if k in n:
+            n[k] = n[k] + d
+    if "path" in n:
+        n["path"] = n["path"].translated(d)
+    return n
+
+
+def shape_scaled(s, f):
+    """A copy with its stroke width / text size scaled by f (for [ and ] on a selected mark)."""
+    n = {k: v for k, v in s.items() if k != "_px"}
+    for k in ("w", "size"):
+        if k in n:
+            n[k] = n[k] * f
+    return n
 
 
 def crop_rect(shapes, img):
@@ -837,6 +976,20 @@ def tool_icon(name, fg):
         p.drawLine(QPointF(10, 7.5), QPointF(16, 7.5))
         p.drawLine(QPointF(10, 11), QPointF(16, 11))
         p.drawPolyline(QPolygonF([QPointF(4, 7), QPointF(4, 19), QPointF(14, 19)]))
+    elif name == "select":  # a mouse pointer
+        p.setBrush(c)
+        p.drawPolygon(QPolygonF([QPointF(6, 3), QPointF(6, 17.5), QPointF(9.5, 14), QPointF(12, 19.5), QPointF(14, 18.5),
+                                 QPointF(11.5, 13), QPointF(16.5, 13)]))
+    elif name == "magnify":
+        p.drawEllipse(QRectF(3, 3, 12, 12))
+        p.setPen(QPen(c, 3, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(14, 14), QPointF(19, 19))
+    elif name == "picker":  # an eyedropper
+        p.drawLine(QPointF(4, 18), QPointF(13, 9))
+        p.setPen(QPen(c, 4.5, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(13.5, 8.5), QPointF(17, 5))
+        p.setPen(QPen(c, 1.8, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(11, 6.5), QPointF(15.5, 11))
     elif name in ("undo", "redo"):
         if name == "redo":
             p.translate(22, 0)
@@ -849,28 +1002,37 @@ def tool_icon(name, fg):
     return QIcon(pix)
 
 
-class TextBox(QLineEdit):
-    """Inline text entry on the canvas. Enter places the text, Esc drops it."""
+class TextBox(QPlainTextEdit):
+    """Inline text entry on the canvas. Enter places the text, Shift+Enter starts a new line, Esc drops it."""
 
-    def __init__(self, canvas, color):
+    def __init__(self, canvas, color, px):
         super().__init__(canvas)
-        f = QFont()
-        f.setPixelSize(TEXT_PX)
-        f.setBold(True)
-        self.setFont(f)
+        self.setFont(text_font(px))
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.document().setDocumentMargin(2)
         self.set_color(color)
-        self.resize(240, self.sizeHint().height())
-        self.textChanged.connect(lambda t: self.resize(max(240, self.fontMetrics().horizontalAdvance(t) + 30), self.height()))
+        self.textChanged.connect(self.fit)
+        self.fit()
+
+    def text(self):
+        return self.toPlainText()
+
+    def fit(self):
+        fm = self.fontMetrics()
+        lines = self.text().split("\n")
+        self.resize(max(240, max(fm.horizontalAdvance(line) for line in lines) + 30), fm.lineSpacing() * len(lines) + 16)
 
     def set_color(self, c):
-        self.setStyleSheet(f"QLineEdit {{ background: rgba(0, 0, 0, 0.35); color: {c}; border: 1px dashed rgba(255, 255, 255, 0.8);"
+        self.setStyleSheet(f"QPlainTextEdit {{ background: rgba(0, 0, 0, 0.35); color: {c}; border: 1px dashed rgba(255, 255, 255, 0.8);"
                            " border-radius: 4px; padding: 2px 4px; }")
 
     def focusNextPrevChild(self, _):
         return False  # Tab stays in the box instead of moving focus to a toolbar button mid-word
 
     def keyPressEvent(self, e):
-        if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter) and not e.modifiers() & Qt.ShiftModifier:
             return self.parent().commit_text()  # consumed: Enter must not also trigger the editor's Done
         if e.key() == Qt.Key_Escape:
             return self.parent().drop_text()
@@ -878,15 +1040,19 @@ class TextBox(QLineEdit):
 
 
 class Canvas(QWidget):
-    """The screenshot, scaled to fit, with markup drawn on top. Shapes live in image pixels."""
+    """The screenshot, scaled to fit, with markup drawn on top. Shapes live in image pixels.
+
+    Shapes are never changed in place once committed: every edit makes a new list, and undo/redo swap whole lists."""
 
     def __init__(self, editor, img, bg):
         super().__init__()
         self.ed, self.img, self.bg = editor, img, bg
-        self.shapes, self.undone, self.cur, self.text = [], [], None, None
+        self.shapes, self.history, self.undone = [], [], []
+        self.cur, self.text, self.sel, self.drag, self.proposals = None, None, None, None, []
         self.k, self.off, self.view = 1.0, QPointF(), QPixmap()
         self.rescale = QTimer(self, singleShot=True, interval=60, timeout=self.build_view)  # don't rescale on every resize step
         self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(True)  # the colour picker shows the hex under the pointer
         self.setMinimumSize(400, 260)
 
     def resizeEvent(self, _):
@@ -894,6 +1060,7 @@ class Canvas(QWidget):
         self.k = max(0.01, min((self.width() - 32) / iw, (self.height() - 32) / ih, 1 / self.devicePixelRatioF()))
         self.off = QPointF((self.width() - iw * self.k) / 2, (self.height() - ih * self.k) / 2)
         self.rescale.start()
+        self.ed.place_status()
 
     def build_view(self):
         """Pre-scale the screenshot once per size, so drawing frames only blit it."""
@@ -905,6 +1072,9 @@ class Canvas(QWidget):
 
     def to_img(self, pos):
         return (QPointF(pos) - self.off) / self.k
+
+    def to_screen(self, r):
+        return QRectF(self.off + r.topLeft() * self.k, r.size() * self.k)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -925,44 +1095,86 @@ class Canvas(QWidget):
         p.scale(self.k, self.k)
         p.setClipRect(QRectF(self.img.rect()))
         paint_shapes(p, self.img, live)
+        paint_blurs(p, self.img, [s for s in self.proposals if s["on"]])  # a preview of what Enter will blur
         p.restore()
         crop = crop_rect(live, self.img)
         if crop is not None:
-            cr = QRectF(self.off + crop.topLeft() * self.k, crop.size() * self.k)
             shade, hole = QPainterPath(), QPainterPath()
             shade.addRect(target)
-            hole.addRect(cr)
+            hole.addRect(self.to_screen(crop))
             p.fillPath(shade.subtracted(hole), QColor(0, 0, 0, 150))
             p.setPen(QPen(QColor("white"), 1.5, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
-            p.drawRect(cr)
+            p.drawRect(self.to_screen(crop))
+        p.setBrush(Qt.NoBrush)
         if self.cur and self.cur["t"] in ("blur", "ocr"):
-            r = self.cur["r"]
             p.setPen(QPen(ACCENT if self.cur["t"] == "ocr" else QColor("white"), 1.5, Qt.DashLine))
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(QRectF(self.off + r.topLeft() * self.k, r.size() * self.k))
+            p.drawRect(self.to_screen(self.cur["r"]))
+        for s in self.proposals:  # solid: will be blurred; dashed: left visible
+            p.setPen(QPen(ACCENT, 2, Qt.SolidLine if s["on"] else Qt.DashLine))
+            p.drawRect(self.to_screen(s["r"]).adjusted(-2, -2, 2, 2))
+        if self.sel is not None:
+            p.setPen(QPen(ACCENT, 1.5, Qt.DashLine))
+            p.drawRect(self.to_screen(shape_bounds(self.shapes[self.sel])).adjusted(-4, -4, 4, 4))
 
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
         self.commit_text()
-        tool, c, a = self.ed.tool, self.ed.color, self.to_img(e.position())
+        tool, c, a, z = self.ed.tool, self.ed.color, self.to_img(e.position()), self.ed.scale
+        if self.proposals:  # reviewing "Hide private info": clicks only switch boxes on and off
+            for s in self.proposals:
+                if s["r"].contains(a):
+                    s["on"] = not s["on"]
+            return self.update()
+        if tool == "select":
+            self.sel = next((i for i in reversed(range(len(self.shapes))) if shape_hit(self.shapes[i], a, 6 / self.k)), None)
+            if self.sel is not None:
+                self.drag = (a, self.shapes[self.sel], list(self.shapes))
+            return self.update()
+        self.sel = None
+        if tool == "picker":
+            return self.ed.pick(self.pixel(a))
         if tool == "text":
             return self.start_text(e.position())
         if tool == "step":
-            return self.push(dict(t="step", at=a, n=1 + sum(s["t"] == "step" for s in self.shapes), c=c, size=15 / self.k))
-        w = (18 if tool == "highlight" else 4) / self.k  # widths are set in screen pixels: what you see is what you get
-        self.cur = dict(t=tool, a=a, b=a, r=QRectF(a, a), c=c, w=w, path=QPainterPath(a))
+            n = 1 + max((s["n"] for s in self.shapes if s["t"] == "step"), default=0)
+            return self.push(dict(t="step", at=a, n=n, c=c, size=15 * z / self.k))
+        w = (18 if tool == "highlight" else 4) * z / self.k  # widths are set in screen pixels: what you see is what you get
+        self.cur = dict(t=tool, a=a, b=a, r=QRectF(a, a), c=c, w=w, path=QPainterPath(a), at=a)
+
+    def pixel(self, a):
+        if not QRectF(self.img.rect()).contains(a):
+            return None
+        return self.img.pixelColor(int(a.x()), int(a.y())).name()
 
     def mouseMoveEvent(self, e):
-        if not self.cur:
-            return
         b = self.to_img(e.position())
-        self.cur["b"], self.cur["r"] = b, QRectF(self.cur["a"], b).normalized()
-        self.cur["path"].lineTo(b)
+        if self.drag:
+            start, orig, _ = self.drag
+            self.shapes[self.sel] = shape_moved(orig, b - start)  # the list was copied on press: undo keeps the original
+            return self.update()
+        if not self.cur:
+            if self.ed.tool == "picker":
+                self.ed.say(self.pixel(b) or "")
+            return
+        cur = self.cur
+        cur["b"], cur["r"] = b, QRectF(cur["a"], b).normalized()
+        if cur["t"] == "magnify":  # a circle around where the drag started, its 2x callout placed alongside
+            rad = QLineF(cur["a"], b).length()
+            cur["r"] = QRectF(cur["a"] - QPointF(rad, rad), QSizeF(2 * rad, 2 * rad))
+            cur["at"] = place_callout(cur["r"], self.img)
+        cur["path"].lineTo(b)
         self.update()
 
     def mouseReleaseEvent(self, _):
+        if self.drag:
+            orig, before = self.drag[1], self.drag[2]
+            self.drag = None
+            if self.shapes[self.sel] is not orig:
+                self.history.append(before)
+                self.undone.clear()
+            return
         cur, self.cur = self.cur, None
         if cur:
             size = cur["path"].length() if cur["t"] in ("highlight", "pen") else QLineF(cur["a"], cur["b"]).length()
@@ -973,37 +1185,65 @@ class Canvas(QWidget):
                     self.push(cur)
             self.update()
 
-    def push(self, shape):
-        self.shapes.append(shape)
+    def change(self, shapes):
+        self.history.append(self.shapes)
+        self.shapes = shapes
         self.undone.clear()
         self.update()
+
+    def push(self, shape):
+        self.sel = None
+        self.change(self.shapes + [shape])
+
+    def delete_selected(self):
+        if self.sel is not None:
+            i, self.sel = self.sel, None
+            self.change(self.shapes[:i] + self.shapes[i + 1:])
+
+    def scale_selected(self, f):
+        i = self.sel
+        self.change(self.shapes[:i] + [shape_scaled(self.shapes[i], f)] + self.shapes[i + 1:])
 
     def undo(self):
         if self.text:
             return self.drop_text()
-        if self.shapes:
-            self.undone.append(self.shapes.pop())
+        if self.history and not self.drag:
+            self.undone.append(self.shapes)
+            self.shapes, self.sel = self.history.pop(), None
             self.update()
 
     def redo(self):
-        if self.undone:
-            self.shapes.append(self.undone.pop())
+        if self.undone and not self.drag:
+            self.history.append(self.shapes)
+            self.shapes, self.sel = self.undone.pop(), None
             self.update()
 
+    def propose(self, boxes):
+        self.proposals = [dict(t="blur", r=r, on=True) for r in boxes]
+        self.update()
+
+    def apply_proposals(self, keep=True):
+        boxes = [s["r"] for s in self.proposals if s["on"]] if keep else []
+        self.proposals = []
+        if boxes:
+            self.push(dict(t="blur", rs=boxes, r=boxes[0], c="#000", w=1))
+        self.update()
+        return len(boxes)
+
     def start_text(self, pos):
-        box = TextBox(self, self.ed.color)
-        box.move(int(pos.x()) - 6, int(pos.y()) - box.fontMetrics().ascent() - 6)
+        box = TextBox(self, self.ed.color, TEXT_PX * self.ed.scale)
+        box.move(int(pos.x()) - 7, int(pos.y()) - box.fontMetrics().ascent() - 7)
         box.show()
         box.setFocus()
-        self.text = (box, self.to_img(pos))
+        self.text = (box, self.to_img(pos), self.ed.scale)
 
     def commit_text(self):
         if not self.text:
             return
-        box, at = self.text
+        box, at, z = self.text
         self.text = None
         if box.text().strip():
-            self.push(dict(t="text", at=at, text=box.text(), c=self.ed.color, size=TEXT_PX / self.k))
+            self.push(dict(t="text", at=at, text=box.text().rstrip("\n"), c=self.ed.color, size=TEXT_PX * z / self.k))
         box.deleteLater()
         self.setFocus()
 
@@ -1035,7 +1275,7 @@ class Editor(QDialog):
         self.setWindowIcon(icon())
         img = pix.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
         img.setDevicePixelRatio(1)
-        self.tool, self.color = "arrow", COLORS[0]
+        self.tool, self.color, self.scale = "arrow", COLORS[0], 1
         self.canvas = Canvas(self, img, QColor(pal["bg"]))
 
         bar = QFrame(objectName="bar")
@@ -1060,8 +1300,14 @@ class Editor(QDialog):
             b.setStyleSheet(f"QToolButton {{ background: {c}; border: 2px solid {pal['border']}; border-radius: 12px; }}"
                             f"QToolButton:checked {{ border: 2px solid {pal['fg']}; }}")
             b.clicked.connect(lambda _=False, c=c: self.set_color(c))
+            b.setProperty("color", c)
             self.swatches.addButton(b)
             h.addWidget(b)
+        self.size_label = QLabel(objectName="hint", toolTip="Size of new marks, or of the selected one:  [  smaller,  ]  bigger")
+        self.size_label.setFixedWidth(44)
+        self.size_label.setAlignment(Qt.AlignCenter)
+        h.addWidget(self.size_label)
+        self.show_scale()
         h.addWidget(self.vsep())
         undo = self.tool_button("undo", "Undo  (Ctrl+Z)", pal["fg"])
         undo.clicked.connect(lambda: self.canvas.undo())
@@ -1078,10 +1324,10 @@ class Editor(QDialog):
         for b in (private, copytext):
             b.setEnabled(ocr)
             h.addWidget(b)
-        self.status = QLabel(objectName="hint")
-        self.status_timer = QTimer(self, singleShot=True, interval=4000, timeout=self.status.clear)
-        h.addSpacing(6)
-        h.addWidget(self.status)
+        self.status = QLabel(self.canvas, objectName="toast")  # floats over the canvas: the toolbar has no room to spare
+        self.status.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.status.hide()
+        self.status_timer = QTimer(self, singleShot=True, interval=4000, timeout=self.status.hide)
         h.addStretch()
         h.addWidget(QPushButton("Cancel", clicked=self.reject, autoDefault=False, cursor=Qt.PointingHandCursor))
         h.addWidget(QPushButton("Done", objectName="primary", clicked=self.finish, autoDefault=False, cursor=Qt.PointingHandCursor))
@@ -1094,8 +1340,8 @@ class Editor(QDialog):
         avail = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
         d = app.devicePixelRatio()
         k = min(avail.width() * 0.85 * d / img.width(), (avail.height() * 0.85 - 56) * d / img.height(), 1.0)
-        # at least 1000 wide: room for the whole toolbar
-        self.resize(max(1000, int(img.width() / d * k) + 32), max(480, int(img.height() / d * k) + 32 + bar.sizeHint().height()))
+        # at least 1120 wide: room for the whole toolbar
+        self.resize(max(1120, int(img.width() / d * k) + 32), max(480, int(img.height() / d * k) + 32 + bar.sizeHint().height()))
 
     @staticmethod
     def tool_button(name, tip, fg, **kw):
@@ -1112,32 +1358,73 @@ class Editor(QDialog):
     def set_tool(self, name):
         self.canvas.commit_text()
         self.tool = name
-        self.canvas.setCursor(Qt.IBeamCursor if name == "text" else Qt.CrossCursor)
+        self.canvas.sel = None
+        self.canvas.update()
+        self.canvas.setCursor({"text": Qt.IBeamCursor, "select": Qt.ArrowCursor}.get(name, Qt.CrossCursor))
         for b in self.tools.buttons():
             b.setChecked(b.property("tool") == name)
 
     def set_color(self, c):
         self.color = c
+        self.swatches.setExclusive(False)  # a picked colour may match no swatch: then none is checked
+        for b in self.swatches.buttons():
+            b.setChecked(b.property("color") == c)
+        self.swatches.setExclusive(True)
         if self.canvas.text:
             self.canvas.text[0].set_color(c)
 
+    def pick(self, c):
+        if c:
+            self.set_color(c)
+            set_clipboard(text=c)
+            self.say(f"Colour {c} copied · now drawing in it")
+
+    def show_scale(self):
+        self.size_label.setText(f"{self.scale:g}×")
+
+    def resize_marks(self, up):
+        cv = self.canvas
+        if cv.sel is not None:
+            return cv.scale_selected(1.25 if up else 0.8)
+        i = SCALES.index(self.scale) + (1 if up else -1)
+        self.scale = SCALES[max(0, min(len(SCALES) - 1, i))]
+        self.show_scale()
+
     def keyPressEvent(self, e):
         keys = {k: n for n, _, k in TOOLS}
+        cv = self.canvas
         if e.matches(QKeySequence.Undo):
-            self.canvas.undo()
+            cv.undo()
         elif e.matches(QKeySequence.Redo) or (e.key() == Qt.Key_Z and e.modifiers() == Qt.ControlModifier | Qt.ShiftModifier):
-            self.canvas.redo()
+            cv.redo()
+        elif cv.proposals and e.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+            n = cv.apply_proposals(keep=e.key() != Qt.Key_Escape)
+            self.say(f"Blurred {n} private item{'s' * (n != 1)} · Ctrl+Z to undo" if n else "Nothing blurred")
         elif e.key() in (Qt.Key_Return, Qt.Key_Enter):
             self.finish()
+        elif e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and cv.sel is not None:
+            cv.delete_selected()
+        elif e.key() == Qt.Key_Escape and cv.sel is not None:
+            cv.sel = None
+            cv.update()
+        elif e.text() in ("[", "]"):
+            self.resize_marks(e.text() == "]")
         elif not e.modifiers() and e.text().upper() in keys:
             if keys[e.text().upper()] != "ocr" or tesseract():
                 self.set_tool(keys[e.text().upper()])
         else:
             super().keyPressEvent(e)  # Esc cancels
 
-    def say(self, text):
+    def say(self, text, keep=False):
         self.status.setText(text)
-        self.status_timer.start()
+        self.status.setVisible(bool(text))
+        self.place_status()
+        self.status_timer.stop() if keep else self.status_timer.start()
+
+    def place_status(self):
+        s, cv = self.status, self.canvas
+        s.adjustSize()
+        s.move((cv.width() - s.width()) // 2, cv.height() - s.height() - 14)
 
     def ocr(self, img, tsv, done):
         """Run OCR for this editor; Done waits for it, so a redaction still being computed is never skipped."""
@@ -1162,8 +1449,8 @@ class Editor(QDialog):
         def done(tsv, scale):
             boxes = private_boxes(tsv, scale) if tsv else []
             if boxes:
-                self.canvas.push(dict(t="blur", rs=boxes, r=boxes[0], c=self.color, w=1))
-                self.say(f"Blurred {len(boxes)} private item{'s' * (len(boxes) != 1)} · Ctrl+Z to undo")
+                self.canvas.propose(boxes)
+                self.say(f"{len(boxes)} found · click a box to leave it visible · Enter blurs them · Esc cancels", keep=True)
             else:
                 self.say("Nothing private found" if tsv is not None else "Couldn't read this screenshot")
         self.ocr(self.canvas.img, True, done)
@@ -1182,6 +1469,7 @@ class Editor(QDialog):
 
     def finish(self):
         self.canvas.commit_text()
+        self.canvas.apply_proposals()  # Done while reviewing private info: blur what's marked
         if self.pending:  # e.g. Done right after "Hide private info": wait, or the blur would be left out
             self.finish_after_ocr = True
             return self.say("Finishing after the text is read…")
@@ -1675,12 +1963,17 @@ QToolButton#corner { background: @border; border: none; border-radius: 4px; }
 QToolButton#corner:hover { background: @muted; }
 QToolButton#corner:checked { background: @accent; }
 QLabel#warn { background: rgba(255, 176, 32, 0.18); border: 1px solid #ffb020; border-radius: 10px; padding: 10px 12px; }
+QScrollArea, QWidget#body { background: @bg; border: none; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: @border; border-radius: 4px; min-height: 30px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { height: 0; background: none; }
 """
 EDITOR_QSS = """
 QFrame#bar { background: @card; border: none; border-bottom: 1px solid @border; }
 QToolButton#tool { background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 5px; }
 QToolButton#tool:hover { background: @input; }
 QToolButton#tool:checked { background: rgba(10, 132, 255, 0.22); border: 1px solid @accent; }
+QLabel#toast { background: rgba(28, 28, 30, 0.9); color: white; border-radius: 10px; padding: 7px 14px; }
 """
 
 
@@ -1803,9 +2096,19 @@ class Settings(QDialog):
         fl.addWidget(QPushButton("Browse…", clicked=self.browse, cursor=Qt.PointingHandCursor))
         self.region_key, self.screen_key = KeyEdit(c.region_key), KeyEdit(c.screen_key)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(22, 22, 22, 18)
+        # The rows live in a scroll area: on short screens they keep their natural height (instead of being squeezed until
+        # labels overlap) and the window scrolls; Cancel/Save stay pinned below.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        body = QWidget(objectName="body")
+        root = QVBoxLayout(body)
+        root.setContentsMargins(22, 22, 22, 12)
         root.setSpacing(16)
+        scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
         header = QHBoxLayout()
         logo = QLabel()
         logo.setPixmap(icon().pixmap(44, 44))
@@ -1851,7 +2154,12 @@ class Settings(QDialog):
         buttons.addWidget(QPushButton("Cancel", clicked=self.reject, cursor=Qt.PointingHandCursor))
         save = QPushButton("Save", objectName="primary", clicked=self.accept, cursor=Qt.PointingHandCursor, default=True)
         buttons.addWidget(save)
-        root.addLayout(buttons)
+        footer = QWidget(objectName="body")
+        footer.setLayout(buttons)
+        buttons.setContentsMargins(22, 10, 22, 16)
+        outer.addWidget(footer)
+        avail = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
+        self.resize(500, min(body.sizeHint().height() + footer.sizeHint().height() + 4, int(avail.height() * 0.9)))
 
     @staticmethod
     def slider(lo, hi, value, fmt):

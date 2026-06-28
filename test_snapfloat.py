@@ -8,8 +8,8 @@ os.environ.update(QT_QPA_PLATFORM="offscreen", XDG_CURRENT_DESKTOP="", XDG_CONFI
 sys.argv = sys.argv[:1]
 import snapfloat as sf
 assert str(sf.TMP).startswith(tempfile.tempdir), "test must never touch the real SnapFloat temp folder"
-from PySide6.QtCore import QPointF, QRectF
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPixmap
 
 assert sf.gnome_accel("Ctrl+Shift+4") == "<Control><Shift>4"
 assert sf.gnome_accel("Super+S") == "<Super>s"
@@ -197,6 +197,66 @@ assert len(done_calls) == 1, "and finish once it's back, with the blur"
 crop_ed = sf.Editor(app, QPixmap.fromImage(img), lambda p: None)
 crop_ed.canvas.push(dict(t="crop", r=QRectF(10, 10, 50, 50), c="#000", w=1))
 assert crop_ed.canvas.render().size().toTuple() == (50, 50) and crop_ed.canvas.render(crop=False).size() == img.size()
+
+# editor: select/move/delete/resize are undoable; a moved mark keeps the original for undo
+mk = sf.Editor(app, QPixmap.fromImage(img), lambda p: None)
+mc = mk.canvas
+mc.resize(500, 400)
+mc.resizeEvent(None)
+mc.push(dict(t="rect", r=QRectF(100, 100, 50, 50), c="#ff3b30", w=4))
+mk.set_tool("select")
+press = lambda pt, kind: getattr(mc, kind)(QMouseEvent(
+    {"mousePressEvent": QEvent.MouseButtonPress, "mouseMoveEvent": QEvent.MouseMove,
+     "mouseReleaseEvent": QEvent.MouseButtonRelease}[kind], mc.off + pt * mc.k, mc.off + pt * mc.k,
+    Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+press(QPointF(100, 125), "mousePressEvent")
+assert mc.sel == 0, "clicking a box's edge selects it"
+press(QPointF(140, 165), "mouseMoveEvent")
+press(QPointF(140, 165), "mouseReleaseEvent")
+assert mc.shapes[0]["r"].topLeft() == QPointF(140, 140)
+mk.resize_marks(True)
+assert mc.shapes[0]["w"] == 5
+mc.undo()
+mc.undo()
+assert mc.shapes[0]["r"].topLeft() == QPointF(100, 100) and mc.shapes[0]["w"] == 4, "undo restores move and resize"
+mc.redo()
+mc.sel = 0
+mc.delete_selected()
+assert not mc.shapes
+mc.undo()
+assert len(mc.shapes) == 1
+mk.set_tool("arrow")
+mk.resize_marks(True)
+assert mk.scale == 1.5 and mk.size_label.text() == "1.5×"
+
+# a magnifier never shows what a blur hides, and multi-line text renders every line
+mc.change([dict(t="blur", r=QRectF(0, 0, 100, 100), c="#000", w=1),
+           dict(t="magnify", r=QRectF(30, 30, 40, 40), at=QPointF(250, 150), c="#ff3b30", w=2)])
+out = mc.render()
+assert out.pixelColor(250, 150) == out.pixelColor(50, 50), "callout centre shows the blurred pixel, not the original"
+assert out.pixelColor(50, 50) != img.pixelColor(50, 50)
+mc.change([dict(t="text", at=QPointF(20, 40), text="one\ntwo", c="#ffffff", size=22)])
+b = sf.shape_bounds(mc.shapes[0])
+assert b.height() > 40, "two lines tall"
+assert any(mc.render().pixelColor(x, 62) != img.pixelColor(x, 62) for x in range(20, 60)), "second line drawn"
+
+# step numbers continue after a deletion; the picker copies a pixel's colour
+mc.change([dict(t="step", at=QPointF(10, 10), n=1, c="#000", size=10), dict(t="step", at=QPointF(40, 10), n=2, c="#000", size=10)])
+mc.change(mc.shapes[1:])
+mk.set_tool("step")
+press(QPointF(80, 80), "mousePressEvent")
+assert mc.shapes[-1]["n"] == 3
+mk.set_tool("picker")
+press(QPointF(10, 20), "mousePressEvent")
+assert mk.color == img.pixelColor(10, 20).name() and app.clipboard().text() == mk.color
+
+# "Hide private info" is a preview: a clicked box stays visible, Enter blurs the rest as one undo
+mc.change([])
+mc.propose([QRectF(0, 0, 40, 40), QRectF(200, 200, 40, 40)])
+press(QPointF(210, 210), "mousePressEvent")
+assert not mc.shapes and [s["on"] for s in mc.proposals] == [True, False]
+assert mc.apply_proposals() == 1 and mc.shapes[0]["rs"] == [QRectF(0, 0, 40, 40)] and not mc.proposals
+mk.close()
 
 # a 6th screenshot never closes one that's being edited or is pinned
 for t in list(app.thumbs):
