@@ -52,8 +52,10 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 
 | Feature | How |
 |---|---|
-| **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and blurs them. One `Ctrl+Z` brings them back |
-| **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR) |
+| **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and marks them. Click any you want to keep visible, `Enter` blurs the rest |
+| **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR, in the languages you pick in Settings) |
+| **Read QR codes** | Right-click → *Read QR code*: the link or text in a QR code or barcode is copied |
+| **Magnifier** | Markup tool `M`: a 2× zoom bubble for small details (it never reveals what you blurred) |
 | **Blur** | A real redaction tool. Mac markup has no blur |
 | **Numbered steps** | Markup tool `N`: click to drop 1, 2, 3… badges for how-to guides |
 | **Spotlight** | Markup tool `S`: darken everything except the part that matters |
@@ -140,7 +142,7 @@ The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then b
 | Flick toward the screen edge | Dismisses it (a short flick springs back) |
 | Hover | Pauses the countdown |
 | Click the **✕** | Closes it (still available under *Recent*) |
-| Right-click | Mark up · Copy · Copy text · Beautify · Combine all · Open in viewer · Save · Save As · Pin · Close |
+| Right-click | Mark up · Copy · Copy text · Read QR code · Beautify · Combine all · Open in viewer · Save · Save As · Pin · Close |
 
 ### Tray menu
 | Item | What it does |
@@ -154,21 +156,24 @@ Click a thumbnail to open the editor. **Done** updates the thumbnail, its file a
 
 | Tool | Key | Use it for |
 |---|---|---|
+| Select | `V` | Click a mark to select it: drag to move it, `Delete` removes it, `[` `]` resize it |
 | Arrow | `A` | Point at something |
 | Box | `R` | Frame an area |
 | Ellipse | `E` | Circle something |
 | Pen | `P` | Draw freehand |
 | Highlighter | `H` | Mark text, like a marker pen |
-| Text | `T` | Click, type, press `Enter` (`Esc` drops it) |
+| Text | `T` | Click, type, press `Enter` (`Shift+Enter` for a new line, `Esc` drops it) |
 | Numbered steps | `N` | Click to place 1, 2, 3… badges |
+| Magnifier | `M` | Drag out from the centre of a small detail: a 2× bubble appears beside it |
 | Spotlight | `S` | Drag over what matters: everything else darkens (several spotlights combine; arrows and text stay bright) |
 | Copy text from an area | `X` | Drag a box over some text: just that text is copied. Nothing is drawn on the screenshot |
 | Blur | `B` | Drag over phone numbers, emails, OTPs or faces. Uses a coarse mosaic, so the text can't be recovered |
 | Crop | `C` | Drag the area to keep |
+| Colour picker | `I` | Click a pixel: its colour becomes your pen colour and its hex code is copied |
 
-Toolbar buttons: **👁 Hide private info** (auto-blurs emails, phone numbers, OTPs, card numbers; one undo restores them) and **Copy text** (all of it; use the `X` tool for just a part).
+Toolbar buttons: **👁 Hide private info** (finds emails, phone numbers, OTPs, card numbers; click a box to leave it visible, `Enter` blurs the rest as one undo step) and **Copy text** (all of it; use the `X` tool for just a part).
 
-`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Enter` done · `Esc` cancel. Pick a colour from the swatches; line widths match what you see on screen.
+`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `[` `]` smaller/bigger marks · `Enter` done · `Esc` cancel. Pick a colour from the swatches; line widths match what you see on screen.
 
 ### Command line
 ```sh
@@ -177,6 +182,7 @@ snapfloat --region     # capture a region (starts the app if needed)
 snapfloat --screen     # capture the whole screen
 snapfloat --settings   # open Settings
 snapfloat --quit       # quit
+snapfloat --self-test  # check this install works: drawing, image formats, helper programs, OCR, QR (no window opens)
 ```
 
 ## Settings
@@ -198,6 +204,7 @@ Open from the tray icon → **Settings…**
 | Start at login | Launch automatically, so the first shortcut after a reboot is instant | on |
 | Shutter sound / Screen flash | (Windows/X11) Feedback when a shot is taken. On Wayland, GNOME already does both | on |
 | Also catch copied images | (Windows/X11) Show a thumbnail for `Win+Shift+S`/`PrtSc` captures | off |
+| Text languages | OCR languages for *Copy text* and *Hide private info*, joined with `+` (e.g. `eng+hin`). Add more with `sudo apt install tesseract-ocr-hin` | English |
 
 Settings are stored in `~/.config/snapfloat/snapfloat.conf` (Linux) or the registry under `HKCU\Software\snapfloat` (Windows).
 

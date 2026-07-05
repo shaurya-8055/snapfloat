@@ -164,9 +164,13 @@ def uninstall(quit_running=True):
             shutil.rmtree(d, ignore_errors=True)
 
 
-ARG = None
+ARG = SELF_TEST = None
 if __name__ == "__main__":
-    if "--uninstall" in sys.argv:
+    # --self-test[=report.txt]: checks a build works on this machine (CI runs it on the AppImage and the exe)
+    SELF_TEST = next((a.partition("=")[2] for a in sys.argv[1:] if a.partition("=")[0] == "--self-test"), None)
+    if SELF_TEST is not None:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"  # no display needed
+    elif "--uninstall" in sys.argv:
         uninstall()
         if "--quiet" in sys.argv:  # package managers (Scoop) uninstall without a popup
             pass
@@ -177,7 +181,7 @@ if __name__ == "__main__":
             print("SnapFloat removed.")
         sys.exit(0)
     ARG = next((a[2:] for a in sys.argv[1:] if a[2:] in COMMANDS), None)
-    if send(ARG or "settings") or ARG == "quit":  # already running: just forward the command
+    if SELF_TEST is None and (send(ARG or "settings") or ARG == "quit"):  # already running: just forward the command
         sys.exit(0)
 
 WAYLAND = os.environ.get("XDG_SESSION_TYPE") == "wayland"
@@ -187,7 +191,7 @@ if sys.platform.startswith("linux"):
 
 from PySide6.QtCore import (QAbstractAnimation, QCoreApplication, QEasingCurve, QLineF, QLockFile, QMimeData, QObject, QPoint,
                             QPointF, QPropertyAnimation, QProcess, QRect, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, QUrl,
-                            QVariantAnimation, Signal, Slot, SLOT, qVersion)
+                            QEventLoop, QVariantAnimation, Signal, Slot, SLOT, qVersion)
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QDrag, QFont, QGuiApplication, QIcon, QImage, QImageReader,
                            QFontMetricsF, QKeySequence, QLinearGradient, QPainter, QPainterPath,
                            QPainterPathStroker, QPen, QPixmap, QPolygonF)
@@ -195,10 +199,15 @@ from shiboken6 import isValid
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
+try:
+    import zxingcpp  # reads QR codes; optional when running from source
+except ImportError:
+    zxingcpp = None
 
 DEFAULTS = dict(seconds=6, corner="bottom-right", size=220, copy=True, save=False,
                 folder=str(Path.home() / "Pictures" / "Screenshots"), region_key="Ctrl+Shift+4",
-                screen_key="Ctrl+Shift+3", print_key=True, watch_clipboard=False, autostart=True, small=False, sound=True, flash=True, bound="")
+                screen_key="Ctrl+Shift+3", print_key=True, watch_clipboard=False, autostart=True, small=False, sound=True, flash=True, bound="",
+                ocr_langs="")
 CORNERS = ["bottom-right", "bottom-left", "top-right", "top-left"]
 MAX_THUMBS = 5
 MAX_RECENT = 10
@@ -766,6 +775,12 @@ def tesseract():
     return found
 
 
+def ocr_langs():
+    """Tesseract's installed languages (its own "osd" helper model isn't one)."""
+    out = subprocess.run([tesseract(), "--list-langs"], capture_output=True, text=True).stdout if tesseract() else ""
+    return [lang for lang in out.splitlines()[1:] if lang.strip() and lang != "osd"]  # the first line is a heading
+
+
 def run_ocr(owner, img, tsv, done):
     """Tesseract in a QProcess, so the UI doesn't wait for it. Calls done(output or None, scale), unless `owner` (the
     window that asked) has been closed and deleted meanwhile."""
@@ -793,7 +808,17 @@ def run_ocr(owner, img, tsv, done):
             done(out, scale)
     proc.finished.connect(finished)
     proc.errorOccurred.connect(lambda err: finished() if err == QProcess.FailedToStart else None)
-    proc.start(exe, [str(path), "stdout"] + (["tsv"] if tsv else []))
+    langs = Config().ocr_langs
+    proc.start(exe, [str(path), "stdout"] + (["-l", langs] if langs else []) + (["tsv"] if tsv else []))
+
+
+def read_qr(img):
+    """QR codes and barcodes in an image: copies what they say and returns what to tell the user."""
+    codes = [r.text for r in zxingcpp.read_barcodes(img.convertToFormat(QImage.Format_Grayscale8)) if r.text]
+    if not codes:
+        return "No QR code or barcode found"
+    set_clipboard(text="\n".join(codes))
+    return f"Copied: {codes[0][:80]}" if len(codes) == 1 else f"Copied {len(codes)} codes"
 
 
 def private_boxes(tsv, scale):
@@ -1677,6 +1702,8 @@ class Thumb(QWidget):
         m.addAction("Mark up…", self.markup)
         m.addAction("Copy", lambda: self.app.copy(self.full, self.path))
         m.addAction("Copy text", self.copy_text).setEnabled(bool(tesseract()))
+        qr = m.addAction("Read QR code", lambda: self.app.tray.showMessage(APP, read_qr(self.full.toImage())))
+        qr.setEnabled(zxingcpp is not None)
         m.addAction("Beautify", lambda: self.set_image(beautify(self.full))).setEnabled(self.editor is None)
         if len(self.app.thumbs) > 1:
             m.addAction(f"Combine all {len(self.app.thumbs)} into one", self.app.combine_all)
@@ -2095,6 +2122,9 @@ class Settings(QDialog):
         fl.addWidget(self.folder, 1)
         fl.addWidget(QPushButton("Browse…", clicked=self.browse, cursor=Qt.PointingHandCursor))
         self.region_key, self.screen_key = KeyEdit(c.region_key), KeyEdit(c.screen_key)
+        self.langs = ocr_langs()
+        self.ocr_langs = QLineEdit(c.ocr_langs, placeholderText="e.g. eng+hin", toolTip="Installed: " + ", ".join(self.langs))
+        self.ocr_langs.setFixedWidth(130)
 
         # The rows live in a scroll area: on short screens they keep their natural height (instead of being squeezed until
         # labels overlap) and the window scrolls; Cancel/Save stay pinned below.
@@ -2139,6 +2169,9 @@ class Settings(QDialog):
             ("Capture region", "Also works, any time", self.region_key),
             ("Capture screen", "Click a field and press keys · Backspace clears", self.screen_key)]))
         general = [("Start at login", "Otherwise the first shortcut has to start it (slower)", self.autostart_t)]
+        if self.langs:
+            more = ", ".join(self.langs[:4]) + ("…" if len(self.langs) > 4 else "")
+            general.append(("Text languages", f"For Copy text · installed: {more}", self.ocr_langs))
         if not WAYLAND:  # on Wayland GNOME's screenshot service already flashes and plays its sound
             general += [("Shutter sound", None, self.sound_t), ("Screen flash", None, self.flash_t),
                         ("Also catch copied images", "Win+Shift+S, PrtSc", self.watch_t)]
@@ -2224,7 +2257,8 @@ class Settings(QDialog):
                       folder=self.folder.text().strip() or DEFAULTS["folder"], region_key=self.region_key.text(),
                       screen_key=self.screen_key.text(), autostart=self.autostart_t.isChecked(),
                       watch_clipboard=self.watch_t.isChecked(), sound=self.sound_t.isChecked(), flash=self.flash_t.isChecked(),
-                      print_key=self.print_t.isChecked())
+                      print_key=self.print_t.isChecked(),
+                      ocr_langs="+".join(lang for lang in re.split(r"[+,\s]+", self.ocr_langs.text()) if lang in self.langs))
         for k, v in values.items():
             self.app.cfg.set(k, v)
         self.app.apply()
@@ -2487,7 +2521,91 @@ class App(QApplication):
         self.dialog.activateWindow()
 
 
+def self_test(report):
+    """Draw every mark, round-trip the image formats, run the helper programs SnapFloat starts (a frozen build's
+    libraries must not break them), read text and a QR code. Writes the results to `report` (or stdout); returns the exit code."""
+    app = QApplication(sys.argv[:1])
+    lines, failed = [], []
+
+    def check(name, fn):
+        try:
+            note = fn()
+            lines.append(f"ok    {name}" + (f" ({note})" if note else ""))
+        except Exception as e:
+            failed.append(name)
+            lines.append(f"FAIL  {name}: {type(e).__name__}: {e}")
+
+    def drawing():
+        img = QImage(640, 400, QImage.Format_ARGB32_Premultiplied)
+        img.fill(QColor("#336699"))
+        ed = Editor(app, QPixmap.fromImage(img), lambda p: None)
+        a, b = QPointF(40, 40), QPointF(300, 200)
+        path = QPainterPath(a)
+        path.lineTo(b)
+        ed.canvas.change([dict(t=t, a=a, b=b, r=QRectF(a, b), at=b, path=path, c="#ff3b30", w=4, size=20, n=1, text="Hi\nthere")
+                          for t in ("blur", "spotlight", "magnify", "rect", "ellipse", "pen", "arrow", "highlight", "text", "step")])
+        out = ed.canvas.render()
+        ed.close()
+        assert out.size() == img.size() and out.pixelColor(60, 60) != img.pixelColor(60, 60), "marks weren't drawn"
+
+    def formats():
+        img = QImage(64, 48, QImage.Format_RGB32)
+        img.fill(QColor("red"))
+        for fmt in ("png", "jpg", "bmp"):
+            path = tmp_dir() / f"self-test.{fmt}"
+            assert img.save(str(path)) and QImage(str(path)).width() == 64, f"can't write and read {fmt.upper()}"
+            path.unlink()
+
+    def programs():
+        names = ("tesseract",) if os.name == "nt" else ("gsettings", "gnome-extensions", "wl-copy", "tesseract")
+        ran = []
+        for n in names:
+            exe = tesseract() if n == "tesseract" else shutil.which(n)
+            if exe:
+                r = subprocess.run([exe, "version" if n == "gnome-extensions" else "--version"], capture_output=True, text=True,
+                                   timeout=30)
+                assert r.returncode == 0, f"{n} exited {r.returncode}: {r.stderr.strip()[:300]}"
+                ran.append(n)
+        return "ran " + ", ".join(ran) if ran else "none installed"
+
+    def ocr():
+        if not tesseract():
+            return "skipped: Tesseract isn't installed"
+        img = QImage(900, 160, QImage.Format_RGB32)
+        img.fill(QColor("white"))
+        p = QPainter(img)
+        p.setFont(text_font(64))
+        p.drawText(30, 110, "SnapFloat 2468")
+        p.end()
+        loop, out = QEventLoop(), []
+        run_ocr(None, img, False, lambda text, _scale: (out.append(text), loop.quit()))
+        QTimer.singleShot(60000, loop.quit)
+        if not out:
+            loop.exec()
+        assert out and out[0] and "2468" in out[0], f"read {out[0] if out else 'nothing'!r}"
+
+    def qr():
+        if zxingcpp is None:
+            assert not getattr(sys, "frozen", False), "zxing-cpp isn't bundled"
+            return "skipped: zxing-cpp isn't installed"
+        code = bytes(zxingcpp.create_barcode("snapfloat", zxingcpp.BarcodeFormat.QRCode).to_image(scale=6))
+        side = int(len(code) ** 0.5)
+        img = QImage(code, side, side, side, QImage.Format_Grayscale8)
+        assert [r.text for r in zxingcpp.read_barcodes(img)] == ["snapfloat"]  # read_qr itself would replace the clipboard
+
+    for name, fn in (("drawing", drawing), ("image formats", formats), ("helper programs", programs), ("OCR", ocr), ("QR", qr)):
+        check(name, fn)
+    lines.append(f"{APP} self-test: " + (f"FAILED ({', '.join(failed)})" if failed else "passed"))
+    if report:
+        Path(report).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        print("\n".join(lines))
+    return 1 if failed else 0
+
+
 if __name__ == "__main__":
+    if SELF_TEST is not None:
+        sys.exit(self_test(SELF_TEST))
     # Two copies starting at once (autostart + an early PrtSc) would fight over the socket and each other's files.
     lock = QLockFile(SERVER + ".lock" if os.name != "nt" else os.path.join(tempfile.gettempdir(), SERVER + ".lock"))
     if not lock.tryLock(200):
