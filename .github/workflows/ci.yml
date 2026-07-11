@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Qt's offscreen platform needs EGL/fontconfig; Tesseract lets the OCR checks run instead of being skipped
+      - run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 tesseract-ocr
+      - run: pip install -r requirements.txt pyflakes
+      - run: python -m pyflakes snapfloat.py test_snapfloat.py
+      - run: python test_snapfloat.py
+      - name: GNOME extension parses
+        run: cp gnome-extension/extension.js "$RUNNER_TEMP/extension.mjs" && node --check "$RUNNER_TEMP/extension.mjs"
