@@ -1,5 +1,5 @@
-// SnapFloat thumbnails title themselves "snapfloat-thumb <corner> <offset>".
-// Wayland gives apps no say over placement, so the shell does it for them.
+// SnapFloat thumbnails title themselves "snapfloat-thumb <corner> <offset>", and screenshots floated on screen "snapfloat-pin".
+// Wayland gives apps no say over placement or stacking, so the shell does it for them.
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -48,9 +48,16 @@ export default class SnapFloatExtension extends Extension {
     }
 
     _place(win) {
+        if (win.get_client_type() !== Meta.WindowClientType.WAYLAND)
+            return; // on X11 the app places its own windows
+        if (win.get_title() === 'snapfloat-pin') { // "Float on screen": stays above other windows, wherever the user drags it
+            if (!win.is_above())
+                win.make_above();
+            return;
+        }
         const m = TITLE.exec(win.get_title() ?? '');
-        if (!m || win.get_client_type() !== Meta.WindowClientType.WAYLAND)
-            return; // settings dialog and friends; on X11 the app places its own windows
+        if (!m)
+            return; // settings dialog and friends
         const [, corner, offset] = m;
         if (!win.is_above())
             win.make_above();
