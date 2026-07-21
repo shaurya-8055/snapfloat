@@ -132,6 +132,7 @@ The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then b
 | `Ctrl+Shift+4` / `Ctrl+Shift+3` | Same, Mac-style; work alongside |
 | Click the tray icon | Capture a region |
 | `Esc` / right-click | Cancel a region selection (Windows/X11) |
+| Click instead of dragging | Captures the window under the pointer (Windows; it is highlighted as you move) |
 
 ### The thumbnail
 | Do this | And this happens |
