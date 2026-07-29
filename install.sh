@@ -15,8 +15,9 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
-# tesseract-ocr powers "Copy text" and "Hide private info"; wl-clipboard lets a background app set the clipboard on Wayland
-PKGS="python3-venv libxcb-cursor0 tesseract-ocr wl-clipboard"
+# tesseract-ocr powers "Copy text" and "Hide private info"; wl-clipboard lets a background app set the clipboard on Wayland;
+# GStreamer's PipeWire source and openh264 (plugins-bad) record the screen as MP4
+PKGS="python3-venv libxcb-cursor0 tesseract-ocr wl-clipboard gstreamer1.0-pipewire gstreamer1.0-plugins-bad"
 if ! dpkg -s $PKGS >/dev/null 2>&1; then
     { sudo apt-get update -qq && sudo apt-get install -y $PKGS; } ||
         echo "warning: couldn't install system packages (no sudo?). Install them yourself: sudo apt install $PKGS"
