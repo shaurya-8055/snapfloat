@@ -1,0 +1,31 @@
+[project]
+name = "snapfloat"
+version = "1.1.1"
+description = "macOS-style floating screenshot thumbnail for Linux and Windows"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Shaurya Shakya" }]
+requires-python = ">=3.10"
+dependencies = [
+    # Pinned below 6.10: newer PySide6 sends an empty drag image on Wayland, so the dragged thumbnail would be invisible.
+    # 6.9 predates Python 3.14 but its abi3 wheel runs fine there: install with pip install --ignore-requires-python .
+    "PySide6-Essentials>=6.9,<6.10",
+    "zxing-cpp>=2.2,<4",  # Read QR code; SnapFloat runs without it
+    "jeepney>=0.8",  # Wayland screen recording: talks to the ScreenCast portal (pure Python)
+]
+
+[project.urls]
+Homepage = "https://github.com/shaurya-8055/snapfloat"
+
+[project.scripts]
+snapfloat = "snapfloat.__main__:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["snapfloat"]
+
+[tool.setuptools.package-data]
+snapfloat = ["gnome-extension/*"]

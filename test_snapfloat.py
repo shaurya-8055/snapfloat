@@ -1,4 +1,4 @@
-"""Smoke test, no display needed: python test_snapfloat.py"""
+"""Smoke test, no display needed: python test_snapfloat.py (from the repo root)"""
 import os, sys, tempfile
 # isolate everything: a running SnapFloat's socket, temp shots, config and autostart must stay untouched
 tempfile.tempdir = tempfile.mkdtemp()  # gettempdir() is cached, so TMPDIR alone would still hit the real /tmp
@@ -6,7 +6,30 @@ os.environ.update(QT_QPA_PLATFORM="offscreen", XDG_CURRENT_DESKTOP="", XDG_CONFI
                   XDG_RUNTIME_DIR=tempfile.mkdtemp(), HOME=tempfile.mkdtemp(), TMPDIR=tempfile.tempdir,
                   XDG_SESSION_TYPE="", WAYLAND_DISPLAY="")  # never inherit the desktop's Wayland session
 sys.argv = sys.argv[:1]
-import snapfloat as sf
+import importlib, pkgutil
+import snapfloat
+
+
+class _Package:
+    """The tests reach every module's names as sf.X, as when SnapFloat was one file: reads are live (sf.TMP follows
+    tmp_dir()), and patching sf.X replaces X in every module that has it."""
+    mods = [importlib.import_module(f"snapfloat.{m.name}") for m in pkgutil.iter_modules(snapfloat.__path__)
+            if m.name != "__main__"]
+
+    def __getattr__(self, k):
+        for m in self.mods:
+            if hasattr(m, k):
+                return getattr(m, k)
+        raise AttributeError(k)
+
+    def __setattr__(self, k, v):
+        owners = [m for m in self.mods if hasattr(m, k)]
+        assert owners, k
+        for m in owners:
+            setattr(m, k, v)
+
+
+sf = _Package()
 assert str(sf.TMP).startswith(tempfile.tempdir), "test must never touch the real SnapFloat temp folder"
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPixmap
@@ -531,7 +554,8 @@ finally:
     sf.record_cmd = real_cmd
 
 # --self-test checks a build end to end and exits non-zero on any failure
-r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)
+r = sf.subprocess.run([sys.executable, "-m", "snapfloat", "--self-test"], capture_output=True, text=True, timeout=120,
+                      cwd=os.path.dirname(os.path.abspath(__file__)))
 assert r.returncode == 0 and "self-test: passed" in r.stdout, r.stdout + r.stderr
 
 # uninstall removes everything install.sh and the app created (GNOME calls disabled: never touch the real desktop)

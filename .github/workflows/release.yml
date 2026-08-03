@@ -13,8 +13,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt pyinstaller pillow
-      - run: pyinstaller --onefile --noconsole --name SnapFloat --icon packaging/snapfloat.png snapfloat.py
+      - run: pip install . pyinstaller pillow
+      - run: pyinstaller --onefile --noconsole --name SnapFloat --icon packaging/snapfloat.png --paths . snapfloat/__main__.py
       # the installer (the portable exe stays too: Scoop and winget use it)
       - run: choco install innosetup -y --no-progress
       - name: Installer

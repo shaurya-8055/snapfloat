@@ -11,7 +11,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "${1:-}" = "--uninstall" ]; then
     # the app's own uninstall is stdlib-only, so system python works even if the install's venv is already gone
-    python3 "$SRC/snapfloat.py" --uninstall
+    cd "$SRC" && python3 -m snapfloat --uninstall
     exit 0
 fi
 
@@ -23,15 +23,16 @@ if ! dpkg -s $PKGS >/dev/null 2>&1; then
         echo "warning: couldn't install system packages (no sudo?). Install them yourself: sudo apt install $PKGS"
 fi
 mkdir -p "$DIR" "$(dirname "$BIN")" "$(dirname "$APPS")"
-cp "$SRC/snapfloat.py" "$DIR/"
+rm -f "$DIR/snapfloat.py"  # 1.x ran from a single copied file
 mkdir -p "$HOME/.local/share/icons/hicolor/256x256/apps"
 cp "$SRC/packaging/snapfloat.png" "$HOME/.local/share/icons/hicolor/256x256/apps/snapfloat.png"
 # check pip, not python: a venv made while python3-venv was missing has python but no pip, and would stay broken
 [ -x "$DIR/venv/bin/pip" ] || python3 -m venv --clear "$DIR/venv"
 # PySide6 6.9 is pinned (newer versions draw no drag image on Wayland) but predates Python 3.14; its abi3 wheel runs fine there
-"$DIR/venv/bin/pip" install -q --upgrade --ignore-requires-python -r "$SRC/requirements.txt"
+"$DIR/venv/bin/pip" install -q --upgrade --force-reinstall --no-deps --ignore-requires-python "$SRC"
+"$DIR/venv/bin/pip" install -q --ignore-requires-python "$SRC"  # its dependencies (PySide6, zxing-cpp)
 
-printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$DIR/venv/bin/python" "$DIR/snapfloat.py" > "$BIN"
+printf '#!/bin/sh\nexec "%s" -m snapfloat "$@"\n' "$DIR/venv/bin/python" > "$BIN"
 chmod +x "$BIN"
 cat > "$APPS" <<DESKTOP
 [Desktop Entry]
@@ -58,10 +59,10 @@ if sys.argv[1] in cur:
 PY
     fi
     mkdir -p "$EXT"
-    if ! diff -q "$SRC/gnome-extension" "$EXT" >/dev/null 2>&1; then
+    if ! diff -q "$SRC/snapfloat/gnome-extension" "$EXT" >/dev/null 2>&1; then
         NEED_RELOGIN=1  # GNOME keeps running the old extension code until the next login
     fi
-    cp "$SRC"/gnome-extension/* "$EXT/"
+    cp "$SRC"/snapfloat/gnome-extension/* "$EXT/"
     if ! gnome-extensions enable "$UUID" 2>/dev/null; then
         # shell hasn't seen it yet (new install): mark it enabled for the next login
         python3 - "$UUID" <<'PY'
