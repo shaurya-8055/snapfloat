@@ -472,6 +472,12 @@ assert sf.stitch(plain) == content.copy(0, 0, W, 400 + VIEW)
 full = page(800, 600, 4)
 assert sf.locate(full.copy(123, 45, 200, 100), full) == QRect(123, 45, 200, 100)
 assert sf.locate(page(200, 100, 5), full) is None
+# ...even with the pointer resting on it in one of the two shots (and on the most varied row)
+area = full.copy(123, 45, 200, 100)
+qp = sf.QPainter(area)
+qp.fillRect(60, 0, 12, 9, QColor("black"))
+qp.end()
+assert sf.locate(area, full) == QRect(123, 45, 200, 100), "a few changed rows must not lose the area"
 
 # the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page
 for t in list(app.thumbs):

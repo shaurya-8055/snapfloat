@@ -92,27 +92,43 @@ def stitch(frames):
 
 
 def locate(part, whole):
-    """Where the screenshot `part` sits in the screenshot `whole`, pixel for pixel, as a QRect; None if it isn't there."""
+    """Where the screenshot `part` sits in the screenshot `whole`, as a QRect; None if it isn't there.
+
+    Pixel exact if possible. Otherwise something small may differ (the pointer resting on the area, a blinking text
+    cursor): then each row with content only has to match in 6 of its 8 segments. Blank rows match anywhere, so they
+    aren't relied on."""
     part, whole = part.convertToFormat(QImage.Format_RGB32), whole.convertToFormat(QImage.Format_RGB32)
     pb, wb, n = part.bytesPerLine(), whole.bytesPerLine(), part.height()
     pd, wd = bytes(part.constBits()), bytes(whole.constBits())
     rows = [pd[y * pb:(y + 1) * pb] for y in range(n)]
-    key = max(range(0, n, max(1, n // 50)), key=lambda y: len(set(rows[y])))  # a varied row: few false hits
-    for wy in range(key, whole.height() - (n - key) + 1):
-        line = wd[wy * wb:(wy + 1) * wb]
-        i = line.find(rows[key])
-        while i != -1:
-            top = wy - key
-            if i % 4 == 0 and all(wd[(top + y) * wb + i:(top + y) * wb + i + pb] == rows[y] for y in range(n)):
-                return QRect(i // 4, top, part.width(), n)
-            i = line.find(rows[key], i + 1)
+    content = [y for y in range(n) if len(set(rows[y])) > 4]
+    seg = -(-pb // 8)
+
+    def close(a, b):
+        return a == b or sum(a[k:k + seg] == b[k:k + seg] for k in range(0, pb, seg)) >= 6
+
+    # search by varied rows (few false hits): the best of each quarter, so a pointer can spoil only one of them
+    q = -(-n // 4)
+    keys = [max(range(a, min(a + q, n)), key=lambda y: len(set(rows[y]))) for a in range(0, n, q)]
+    for check, same in ((range(n), bytes.__eq__), (content, close)):
+        for key in keys[:1] if same is bytes.__eq__ else keys:
+            for wy in range(key, whole.height() - (n - key) + 1):
+                line = wd[wy * wb:(wy + 1) * wb]
+                i = line.find(rows[key])
+                while i != -1:
+                    top = wy - key
+                    if i % 4 == 0 and all(same(wd[(top + y) * wb + i:(top + y) * wb + i + pb], rows[y]) for y in check):
+                        return QRect(i // 4, top, part.width(), n)
+                    i = line.find(rows[key], i + 1)
     return None
 
 
 class ScrollCapture(QWidget):
     """The bar shown during a scrolling capture. Windows/X11 grab the area every 0.4 s while you scroll; on Wayland every
     grab is a screenshot the desktop takes for us, so you scroll, then press Add. Done stitches the parts into one image."""
-    MAX_HEIGHT = 30000  # px: stop there (an endless feed would grow forever)
+    # Stop at 25 megapixels (100 MB; about 4 screens tall at 3456 px wide): an endless feed would grow forever, and a
+    # row cap alone let a full-width capture on a 2x screen reach ~0.9 GB with the strips it's built from.
+    MAX_PIXELS = 25_000_000
 
     def __init__(self, app, first, grab, area=None):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -167,7 +183,7 @@ class ScrollCapture(QWidget):
             self.count()
         if self.hide_to_grab:
             self.show()
-        if self.stitcher.height() >= self.MAX_HEIGHT:
+        if self.stitcher.height() * self.stitcher.first.width() >= self.MAX_PIXELS:
             self.done()
 
     def done(self):

@@ -1,5 +1,5 @@
 """The tray app: capture flow, thumbnails, Recent; and --self-test."""
-import os, re, shutil, stat, subprocess, sys, tempfile, time
+import faulthandler, os, re, shutil, stat, subprocess, sys, tempfile, time
 from pathlib import Path
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEventLoop, QLockFile, QPoint, QPointF,
@@ -23,7 +23,7 @@ from .ocr import run_ocr, tesseract
 from .record import poster, record_missing, Recorder
 from .scroll import locate, ScrollCapture
 from .settings import Settings
-from .system import (APP, AUTHOR, CMD, forget, free_print_key, gsettings_list, LEGACY_TMP, new_path, purge, send,
+from .system import (APP, AUTHOR, CMD, forget, free_print_key, gsettings_list, LEGACY_TMP, LOG, new_path, purge, send,
                      SERVER, tmp_dir)
 from .thumb import Thumb
 
@@ -442,10 +442,27 @@ def self_test(report):
     return 1 if failed else 0
 
 
+def keep_log():
+    """Started from login or a shortcut, nobody sees our output: write it (errors, and the stack of a hard crash) to LOG.
+    The previous session's log stays as .log.1, so restarting after a crash doesn't wipe the evidence."""
+    if sys.stderr is not None and sys.stderr.isatty():
+        return  # run in a terminal: print there
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        if LOG.exists():
+            LOG.replace(LOG.with_suffix(".log.1"))
+        sys.stdout = sys.stderr = open(LOG, "w", buffering=1, encoding="utf-8", errors="replace")
+        os.dup2(sys.stderr.fileno(), 2)  # Qt's own warnings too
+        faulthandler.enable(sys.stderr, all_threads=True)
+    except OSError:
+        pass
+
+
 def run(arg, report=None):
     """Start the tray app (or just the self-test). `arg`: a command from the command line, e.g. "region"."""
     if report is not None:
         sys.exit(self_test(report))
+    keep_log()
     # Two copies starting at once (autostart + an early PrtSc) would fight over the socket and each other's files.
     lock = QLockFile(SERVER + ".lock" if os.name != "nt" else os.path.join(tempfile.gettempdir(), SERVER + ".lock"))
     if not lock.tryLock(200):
