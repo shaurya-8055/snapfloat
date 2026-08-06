@@ -73,11 +73,13 @@ def windows_under_desktop():
 
 
 class Selector(QWidget):
-    """Windows/X11: frozen screen, drag a rectangle, or (Windows) click a window. One per monitor; selection stays on one monitor."""
+    """Frozen screen, drag a rectangle, or (Windows) click a window. One per monitor; selection stays on one monitor.
+    `shot`: the screenshot to show (default: grab the screen; Wayland apps can't). `picked`: the rectangle chosen, in its pixels."""
 
-    def __init__(self, screen, finish, windows=()):
+    def __init__(self, screen, finish, windows=(), shot=None):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.shot, self.finish, self.origin, self.sel, self.hover = screen.grabWindow(0), finish, None, QRect(), None
+        self.shot = shot if shot is not None else screen.grabWindow(0)
+        self.finish, self.origin, self.sel, self.hover, self.picked = finish, None, QRect(), None, None
         # Qt 6 keeps each screen's native origin at its geometry's top-left, so desktop pixels minus that origin are pixels
         # of this screen's shot. ponytail: untested on real Windows, mixed-DPI setups especially
         self.windows = [r.translated(-screen.geometry().topLeft()).intersected(self.shot.rect()) for r in windows]
@@ -118,10 +120,8 @@ class Selector(QWidget):
 
     def mouseReleaseEvent(self, e):
         if self.origin is not None:
-            if self.sel.width() > 3 and self.sel.height() > 3:
-                self.finish(self.shot.copy(self.src(self.sel).toRect()))
-            else:  # a click: the window under it, if any
-                self.finish(self.shot.copy(self.hover) if self.hover else None)
+            self.picked = self.src(self.sel).toRect() if self.sel.width() > 3 and self.sel.height() > 3 else self.hover
+            self.finish(self.shot.copy(self.picked) if self.picked else None)  # a click: the window under it, if any
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:

@@ -3,7 +3,7 @@ import faulthandler, os, re, shutil, stat, subprocess, sys, tempfile, time
 from pathlib import Path
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEventLoop, QLockFile, QPoint, QPointF,
-                            QPropertyAnimation, QRectF, Qt, QTimer, Signal)
+                            QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, Signal)
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -13,7 +13,7 @@ try:
 except ImportError:
     zxingcpp = None
 
-from .capture import Countdown, Flash, Portal, select_region, shutter
+from .capture import Countdown, Flash, Portal, select_region, Selector, shutter
 from .common import Config, icon, M, MAX_RECENT, MAX_THUMBS, recording_icon, set_clipboard, WAYLAND
 from .draw import text_font
 from .editor import Editor
@@ -21,7 +21,7 @@ from .effects import combine
 from .hotkeys import ensure_gnome_extension, gnome_bind, gnome_ext_problem, set_autostart, WinHotkeys
 from .ocr import run_ocr, tesseract
 from .record import poster, record_missing, Recorder
-from .scroll import locate, ScrollCapture
+from .scroll import ScrollCapture
 from .settings import Settings
 from .system import (APP, AUTHOR, CMD, forget, free_print_key, gsettings_list, LEGACY_TMP, LOG, new_path, purge, send,
                      SERVER, tmp_dir)
@@ -38,7 +38,7 @@ class App(QApplication):
         self.setDesktopFileName("snapfloat")  # Wayland app_id: how the GNOME extension spots our windows
         self.setWindowIcon(icon())
         self.cfg, self.thumbs, self.recent, self.dialog, self.hotkeys = Config(), [], [], None, None
-        self.pins, self.scroller, self.portal_to = [], None, None
+        self.pins, self.scroller, self.portal_to, self.picker = [], None, None, None
         self.flash = self.pending = None  # keep these short-lived windows referenced while they animate
         self.busy_since, self.submenus = 0.0, []
         tmp_dir()
@@ -180,42 +180,49 @@ class App(QApplication):
         self.hide_thumbs(grab)
 
     def scrolling(self):
-        """Scrolling capture: pick the area once, then scroll through it (see ScrollCapture)."""
+        """Scrolling capture: freeze the screen and drag the area once, then scroll through it (see ScrollCapture).
+        Every later screenshot is cropped to exactly that area."""
         if not self.start_capture():
             return
-        if WAYLAND:
-            self.portal_to = self.scroll_start
-            self.hide_thumbs(lambda: self.portal.capture(True))
-        else:
-            self.hide_thumbs(lambda: select_region(lambda pix: self.scroll_start(pix.toImage() if pix else None)))
+        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+
+        def frozen(full):
+            if full is None or full.isNull():
+                return self.show_shot(None)
+            origin, mine = QPoint(), full
+            if WAYLAND and len(QGuiApplication.screens()) > 1:  # the desktop's screenshot spans every screen: just ours
+                vg = scr.virtualGeometry()
+                k, g = full.width() / vg.width(), scr.geometry().translated(-vg.topLeft())
+                origin = QPoint(round(g.x() * k), round(g.y() * k))
+                mine = full.copy(QRect(origin, QSize(round(g.width() * k), round(g.height() * k))))
+            shot = QPixmap.fromImage(mine)
+            shot.setDevicePixelRatio(mine.width() / scr.geometry().width())
+            self.picker = Selector(scr, lambda pix: picked(pix, origin, full.size()), shot=shot)
+            self.picker.showFullScreen()
+            self.picker.activateWindow()
+
+        def picked(pix, origin, size):
+            rect = self.picker.picked
+            self.picker.close()
+            self.picker = None
+            if pix is None:
+                return self.show_shot(None)
+
+            def grab(then):
+                at = rect.translated(origin)
+                self.full_screen(lambda img: then(img.copy(at) if img is not None and img.size() == size else None))
+            self.scroller = ScrollCapture(self, pix.toImage(), grab, None if WAYLAND else (scr, rect))
+            self.scroller.show()
+        self.hide_thumbs(lambda: self.full_screen(frozen))
 
     def full_screen(self, then):
-        """then(screenshot of the screen in use, or None). On Wayland the portal takes it, so it arrives later."""
+        """then(screenshot of the screen in use, or None). On Wayland the portal takes it (of every screen), so it
+        arrives later."""
         if WAYLAND:
             self.portal_to = then
             return self.portal.capture(False)
         scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         then(scr.grabWindow(0).toImage())
-
-    def scroll_start(self, first):
-        """The area was picked. Neither the portal nor our selector says where it is on screen, so find it in a full
-        screenshot taken straight away; every later grab is cropped to that spot."""
-        if first is None or first.isNull():
-            return self.show_shot(None)
-        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
-
-        def found(full):
-            rect = locate(first, full) if full is not None else None
-            if rect is None:
-                self.tray.showMessage(APP, "Scrolling capture lost track of the area (did it change?). Please try again.")
-                return self.show_shot(None)
-            size = full.size()
-
-            def grab(then):
-                self.full_screen(lambda img: then(img.copy(rect) if img is not None and img.size() == size else None))
-            self.scroller = ScrollCapture(self, first, grab, None if WAYLAND else (scr, rect))
-            self.scroller.show()
-        self.full_screen(found)
 
     def delayed(self, seconds):
         if not self.start_capture():

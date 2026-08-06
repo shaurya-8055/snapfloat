@@ -413,7 +413,6 @@ assert sf.windows_under_desktop() == [] or os.name == "nt"
 # scrolling capture: frames of a scrolled page stitch back into exactly the page
 import random as _random
 from PySide6.QtGui import QPainter as _QP
-from PySide6.QtCore import QRect
 
 
 def page(w, h, seed):
@@ -468,16 +467,7 @@ for i, f in enumerate(plain):
     plain[i] = f.copy(0, HEAD, W, VIEW)
 assert sf.stitch(plain) == content.copy(0, 0, W, 400 + VIEW)
 
-# locate finds the picked area in a full screenshot, pixel exact
 full = page(800, 600, 4)
-assert sf.locate(full.copy(123, 45, 200, 100), full) == QRect(123, 45, 200, 100)
-assert sf.locate(page(200, 100, 5), full) is None
-# ...even with the pointer resting on it in one of the two shots (and on the most varied row)
-area = full.copy(123, 45, 200, 100)
-qp = sf.QPainter(area)
-qp.fillRect(60, 0, 12, 9, QColor("black"))
-qp.end()
-assert sf.locate(area, full) == QRect(123, 45, 200, 100), "a few changed rows must not lose the area"
 
 # the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page
 for t in list(app.thumbs):
@@ -493,19 +483,42 @@ assert sc.timer is None and app.scroller is None
 assert app.thumbs[-1].full.toImage().convertToFormat(QImage.Format_RGB32) == expect
 app.thumbs[-1].dismiss()
 
-# start-up: the area is found in a full screenshot and later grabs are cropped to it; Cancel ends the capture
+# start-up: the screen is frozen, you drag the area on it, and every later grab is cropped to exactly that area
 real_full = app.full_screen
 app.full_screen = lambda then: then(full)
-app.busy_since = 1.0
-app.scroll_start(full.copy(123, 45, 200, 100))
-sc = app.scroller
+app.busy_since = 0.0
+app.scrolling()
+app.processEvents()  # thumbnails hide first
+for _ in range(20):
+    if app.picker:
+        break
+    app.processEvents()
+    sf.time.sleep(0.02)
+pk = app.picker
+assert pk is not None and pk.shot.toImage().convertToFormat(QImage.Format_RGB32) == full, "the frozen screen is the screenshot"
+d = pk.shot.devicePixelRatio()
+mouse = lambda kind, x, y, b=Qt.LeftButton: getattr(pk, kind)(QMouseEvent(
+    {"mousePressEvent": QEvent.MouseButtonPress, "mouseMoveEvent": QEvent.MouseMove,
+     "mouseReleaseEvent": QEvent.MouseButtonRelease}[kind], QPointF(x / d, y / d), QPointF(x / d, y / d), b, b, Qt.NoModifier))
+mouse("mousePressEvent", 120, 40)
+mouse("mouseMoveEvent", 320, 140)
+mouse("mouseReleaseEvent", 320, 140)
+sc, picked = app.scroller, pk.picked
+assert sc is not None and app.picker is None and abs(picked.width() - 200) <= 1 and abs(picked.height() - 100) <= 1
 got = []
 sc.take(got.append)
-assert got[0] == full.copy(123, 45, 200, 100)
+assert got[0] == full.copy(picked), "later grabs are cropped to the dragged area"
+assert sc.stitcher.first == full.copy(picked)
 sc.finish(None)
 assert app.scroller is None and app.busy_since == 0.0
-app.scroll_start(None)
-assert app.scroller is None
+app.scrolling()  # Esc / right-click on the frozen screen cancels
+for _ in range(20):
+    if app.picker:
+        break
+    app.processEvents()
+    sf.time.sleep(0.02)
+app.picker.finish(None)
+assert app.scroller is None and app.picker is None and app.busy_since == 0.0
 app.full_screen = real_full
 # screen recording: the commands, then start → stop → a video thumbnail (a fake recorder stands in for ffmpeg/GStreamer)
 from pathlib import Path
