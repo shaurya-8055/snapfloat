@@ -49,7 +49,17 @@ class Thumb(QWidget):
         self.hover_anim = QVariantAnimation(self, duration=150, easingCurve=QEasingCurve.OutCubic, valueChanged=self.set_hv)
         self.swipe_anim = QVariantAnimation(self, duration=260, easingCurve=QEasingCurve.OutBack, valueChanged=self.set_swipe)
         self.countdown = QVariantAnimation(self, startValue=1.0, endValue=0.0, valueChanged=self.update, finished=self.expire)
+        self.toast = None  # (title, detail) shown on the thumbnail for a moment: what Read QR code / Copy text did
+        self.toast_timer = QTimer(self, singleShot=True, interval=3000, timeout=self.notify)
         self.restart()
+
+    def notify(self, title=None, detail=""):
+        """Say something on the thumbnail itself (where you're looking) for 3 s; no arguments clears it."""
+        self.toast = (title, detail) if title else None
+        if title:
+            self.toast_timer.start()
+            self.restart()  # don't disappear while it's being read
+        self.update()
 
     def build(self):
         d, size = self.app.devicePixelRatio(), self.app.cfg.size
@@ -139,6 +149,27 @@ class Thumb(QWidget):
         if self.pinned:
             p.setBrush(ACCENT)
             p.drawEllipse(QRectF(w - M - 18, M + 8, 10, 10))
+        if self.toast:
+            title, detail = self.toast
+            box = QRectF(M + 8, 0, w - 2 * M - 16, 46 if detail else 30)
+            box.moveBottom(h - M - 16)
+            p.setBrush(QColor(28, 28, 30, 235))
+            p.drawRoundedRect(box, 9, 9)
+            f = p.font()
+            f.setPixelSize(13)
+            f.setBold(True)
+            p.setFont(f)
+            p.setPen(QColor("white"))
+            inner = box.adjusted(10, 5, -10, -5)
+            p.drawText(inner, Qt.AlignLeft | Qt.AlignTop, p.fontMetrics().elidedText(title, Qt.ElideRight, int(inner.width())))
+            if detail:
+                f.setBold(False)
+                f.setPixelSize(12)
+                p.setFont(f)
+                p.setPen(QColor(255, 255, 255, 190))
+                p.drawText(inner, Qt.AlignLeft | Qt.AlignBottom,
+                           p.fontMetrics().elidedText(detail.replace("\n", " "), Qt.ElideRight, int(inner.width())))
+            p.setPen(Qt.NoPen)
         if self.hv:
             p.setOpacity(fade * self.hv)
             c = QRectF(self.close_rect())
@@ -231,7 +262,7 @@ class Thumb(QWidget):
             m.addAction("Mark up…", self.markup)
             m.addAction("Copy", lambda: self.app.copy(self.full, self.path))
             m.addAction("Copy text", self.copy_text).setEnabled(bool(tesseract()))
-            qr = m.addAction("Read QR code", lambda: self.app.tray.showMessage(APP, read_qr(self.full.toImage())))
+            qr = m.addAction("Read QR code", lambda: self.notify(*read_qr(self.full.toImage())))
             qr.setEnabled(zxingcpp is not None)
             m.addAction("Beautify", lambda: self.set_image(beautify(self.full))).setEnabled(self.editor is None)
             shots = sum(not t.video for t in self.app.thumbs)
@@ -251,7 +282,12 @@ class Thumb(QWidget):
             self.restart()
 
     def copy_text(self):
-        run_ocr(self.app, self.full.toImage(), False, lambda text, _scale: self.app.tray.showMessage(APP, ocr_message(text)))
+        self.notify("Reading text…")
+
+        def done(text, _scale):
+            msg = ocr_message(text)
+            self.notify(*(("✓ " + msg, "On the clipboard: paste it anywhere") if msg.startswith("Copied") else (msg, "")))
+        run_ocr(self, self.full.toImage(), False, done)  # owner = this thumbnail: dropped if it closes first
 
     def open(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path)))

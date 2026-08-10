@@ -292,8 +292,9 @@ if sf.zxingcpp:
     qp = QPainter(canvas)
     qp.drawImage(300, 120, qr)
     qp.end()
-    assert sf.read_qr(canvas) == "Copied: https://example.com/qr" and app.clipboard().text() == "https://example.com/qr"
-    assert sf.read_qr(img) == "No QR code or barcode found"
+    assert sf.read_qr(canvas) == ("✓ Copied to clipboard", "https://example.com/qr")
+    assert app.clipboard().text() == "https://example.com/qr"
+    assert sf.read_qr(img)[0] == "No QR code found"
 
 # a 6th screenshot never closes one that's being edited or is pinned
 for t in list(app.thumbs):
@@ -456,8 +457,8 @@ ep.drawImage(0, HEAD + 3000, footer)
 ep.end()
 st = sf.Stitcher(frames[0])
 added = [st.add(f) for f in frames[1:]]
-assert added == [False, True, True, True, True, False, True, True, True, True, True, True, False, True, True, False, True,
-                 True, True], added
+A, S, L = "added", "still", "lost"
+assert added == [S, A, A, A, A, L, A, A, A, A, A, A, S, A, A, L, A, A, A], added
 assert st.foot == FOOT, "blank rows that happened to stay put aren't mistaken for the footer"
 assert sf.stitch(frames) == expect, "stitched page differs from the original"
 assert sf.stitch(frames[:1]) == frames[0], "a single frame is returned as is"
@@ -466,6 +467,38 @@ plain = [frame(t) for t in (0, 200, 400)]  # no header/footer at all
 for i, f in enumerate(plain):
     plain[i] = f.copy(0, HEAD, W, VIEW)
 assert sf.stitch(plain) == content.copy(0, 0, W, 400 + VIEW)
+
+# fractional scaling (167%): scrolled text is redrawn at sub-pixel positions, so no row repeats exactly; it must still join,
+# and a scroll back up or a jump past the area must be refused rather than joined in the wrong place
+K, FW, FH, FHEAD = 5 / 3, 700, 500, 40
+_rnd = _random.Random(7)
+_lines = [" ".join("".join(_rnd.choice("abcdefghijklmnop") for _ in range(_rnd.randint(2, 8))) for _ in range(_rnd.randint(3, 9)))
+          for _ in range(150)]
+
+
+def screen_at(top):
+    img = QImage(FW, FH, QImage.Format_RGB32)
+    img.fill(QColor("white"))
+    qp = _QP(img)
+    qp.setRenderHint(_QP.TextAntialiasing)
+    qp.scale(K, K)
+    qp.setClipRect(sf.QRectF(0, FHEAD, FW / K, FH / K - FHEAD))
+    qp.translate(0, FHEAD - top)
+    for i, t in enumerate(_lines):
+        qp.drawText(8, 18 + i * 22, f"{i:03d} {t}")
+    qp.setClipping(False)
+    qp.resetTransform()
+    qp.scale(K, K)
+    qp.fillRect(sf.QRectF(0, 0, FW / K, FHEAD), QColor(235, 235, 240))
+    qp.drawText(8, 26, "sticky header")
+    qp.end()
+    return img
+
+
+fs = sf.Stitcher(screen_at(0))
+steps = [(97, A), (180, A), (171, L), (333, A), (334, A), (500, A), (1000, L), (640, A)]
+assert [fs.add(screen_at(t)) for t, _ in steps] == [w for _, w in steps]
+assert abs(fs.result().height() - (FH + 640 * K)) <= 1, fs.result().height()
 
 full = page(800, 600, 4)
 
@@ -477,7 +510,7 @@ sc = sf.ScrollCapture(app, frames[0], lambda then: then(next(feed)))
 assert sc.timer.isActive() and not sc.hide_to_grab
 for _ in range(len(frames)):
     sc.tick()
-assert sc.label.text().endswith(f"{sum(added) + 1} parts")
+assert sc.label.text().endswith(f"{added.count('added') + 1} parts")
 sc.done()
 assert sc.timer is None and app.scroller is None
 assert app.thumbs[-1].full.toImage().convertToFormat(QImage.Format_RGB32) == expect

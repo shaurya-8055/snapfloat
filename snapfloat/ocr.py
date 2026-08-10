@@ -91,12 +91,12 @@ def run_ocr(owner, img, tsv, done):
 
 
 def read_qr(img):
-    """QR codes and barcodes in an image: copies what they say and returns what to tell the user."""
+    """QR codes and barcodes in an image: copies what they say. Returns what to tell the user: (title, detail)."""
     codes = [r.text for r in zxingcpp.read_barcodes(img.convertToFormat(QImage.Format_Grayscale8)) if r.text]
     if not codes:
-        return "No QR code or barcode found"
+        return "No QR code found", "Try a sharper or larger shot of it"
     set_clipboard(text="\n".join(codes))
-    return f"Copied: {codes[0][:80]}" if len(codes) == 1 else f"Copied {len(codes)} codes"
+    return ("✓ Copied to clipboard" if len(codes) == 1 else f"✓ Copied {len(codes)} codes"), codes[0]
 
 
 def private_boxes(tsv, scale):

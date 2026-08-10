@@ -1,7 +1,7 @@
 """Taking the screenshot: the desktop portal (Wayland), the region selector (Windows/X11), shutter feedback."""
 import math, os, random, shutil, subprocess, time
 
-from PySide6.QtCore import QEasingCurve, QObject, QRect, QRectF, Qt, QTimer, QUrl, QVariantAnimation, Signal, SLOT, Slot
+from PySide6.QtCore import QEasingCurve, QObject, QPoint, QRect, QRectF, Qt, QTimer, QUrl, QVariantAnimation, Signal, SLOT, Slot
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -76,9 +76,9 @@ class Selector(QWidget):
     """Frozen screen, drag a rectangle, or (Windows) click a window. One per monitor; selection stays on one monitor.
     `shot`: the screenshot to show (default: grab the screen; Wayland apps can't). `picked`: the rectangle chosen, in its pixels."""
 
-    def __init__(self, screen, finish, windows=(), shot=None):
+    def __init__(self, screen, finish, windows=(), shot=None, hint=""):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.shot = shot if shot is not None else screen.grabWindow(0)
+        self.shot, self.hint = shot if shot is not None else screen.grabWindow(0), hint
         self.finish, self.origin, self.sel, self.hover, self.picked = finish, None, QRect(), None, None
         # Qt 6 keeps each screen's native origin at its geometry's top-left, so desktop pixels minus that origin are pixels
         # of this screen's shot. ponytail: untested on real Windows, mixed-DPI setups especially
@@ -101,6 +101,18 @@ class Selector(QWidget):
             p.drawPixmap(r, self.shot, self.src(r))
             p.setPen(QPen(ACCENT, 2))
             p.drawRect(r)
+        if self.hint and self.sel.isEmpty():  # what to do, until the drag starts
+            f = p.font()
+            f.setPixelSize(15)
+            f.setBold(True)
+            p.setFont(f)
+            box = p.fontMetrics().boundingRect(self.hint).adjusted(-18, -10, 18, 10)
+            box.moveCenter(QPoint(self.width() // 2, 48))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(28, 28, 30, 230))
+            p.drawRoundedRect(box, box.height() / 2, box.height() / 2)
+            p.setPen(QColor("white"))
+            p.drawText(box, Qt.AlignCenter, self.hint)
 
     def window_at(self, pos):
         d = self.shot.devicePixelRatio()
