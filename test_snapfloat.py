@@ -505,20 +505,35 @@ full = page(800, 600, 4)
 # the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page
 for t in list(app.thumbs):
     t.dismiss()
-feed = iter(frames[1:6] + [None] + frames[6:])
+feed = iter(frames[1:6] + [None] + frames[6:] + [frames[-1]])
 sc = sf.ScrollCapture(app, frames[0], lambda then: then(next(feed)))
 assert sc.timer.isActive() and not sc.hide_to_grab
+sc.timer.stop()  # driven by hand below
+
+
+def settle():  # matching runs on a thread: wait for its answer
+    for _ in range(2000):
+        if not sc.busy:
+            return
+        app.processEvents()
+        sf.time.sleep(0.005)
+
+
 for _ in range(len(frames)):
     sc.tick()
+    settle()
 assert sc.label.text().endswith(f"{added.count('added') + 1} parts")
+sc.tick()  # Done while a frame is being matched: it finishes once that frame is in
 sc.done()
+assert sc.timer is not None and sc.finishing
+settle()
 assert sc.timer is None and app.scroller is None
 assert app.thumbs[-1].full.toImage().convertToFormat(QImage.Format_RGB32) == expect
 app.thumbs[-1].dismiss()
 
 # start-up: the screen is frozen, you drag the area on it, and every later grab is cropped to exactly that area
 real_full = app.full_screen
-app.full_screen = lambda then: then(full)
+app.full_screen = lambda then, _scr=None: then(full)
 app.busy_since = 0.0
 app.scrolling()
 app.processEvents()  # thumbnails hide first

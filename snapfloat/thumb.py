@@ -278,8 +278,7 @@ class Thumb(QWidget):
         m.addAction("Close", self.dismiss)
         m.exec(e.globalPos())
         m.deleteLater()
-        if isValid(self):
-            self.restart()
+        QTimer.singleShot(0, self, self.restart)  # after the chosen item has run (Menu defers it): Keep, Save As…
 
     def copy_text(self):
         self.notify("Reading text…")
@@ -351,10 +350,13 @@ class Thumb(QWidget):
     def save_as(self):
         start = str(Path(self.app.cfg.folder).expanduser() / self.path.name)
         ext = self.path.suffix
+        self.hold()  # the dialog runs its own event loop: don't expire behind it
         dest, _ = QFileDialog.getSaveFileName(self, "Save recording" if self.video else "Save screenshot", start,
                                               f"{ext[1:].upper()} (*{ext})")
         if dest:
             self.save(dest)
+        if isValid(self):
+            self.restart()
 
     def expire(self):
         if self.app.cfg.save:

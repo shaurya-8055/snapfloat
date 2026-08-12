@@ -203,6 +203,8 @@ class App(QApplication):
             self.picker.activateWindow()
 
         def picked(pix, origin, size):
+            if self.picker is None:  # finished already (Esc during a drag, then the release)
+                return
             rect = self.picker.picked
             self.picker.close()
             self.picker = None
@@ -211,18 +213,18 @@ class App(QApplication):
 
             def grab(then):
                 at = rect.translated(origin)
-                self.full_screen(lambda img: then(img.copy(at) if img is not None and img.size() == size else None))
+                self.full_screen(lambda img: then(img.copy(at) if img is not None and img.size() == size else None), scr)
             self.scroller = ScrollCapture(self, pix.toImage(), grab, None if WAYLAND else (scr, rect))
             self.scroller.show()
-        self.hide_thumbs(lambda: self.full_screen(frozen))
+        self.hide_thumbs(lambda: self.full_screen(frozen, scr))
 
-    def full_screen(self, then):
-        """then(screenshot of the screen in use, or None). On Wayland the portal takes it (of every screen), so it
-        arrives later."""
+    def full_screen(self, then, scr=None):
+        """then(screenshot of `scr` (default: the screen in use), or None). On Wayland the portal takes it (of every
+        screen), so it arrives later."""
         if WAYLAND:
             self.portal_to = then
             return self.portal.capture(False)
-        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        scr = scr or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         then(scr.grabWindow(0).toImage())
 
     def delayed(self, seconds):
@@ -470,7 +472,6 @@ def run(arg, report=None):
     """Start the tray app (or just the self-test). `arg`: a command from the command line, e.g. "region"."""
     if report is not None:
         sys.exit(self_test(report))
-    keep_log()
     # Two copies starting at once (autostart + an early PrtSc) would fight over the socket and each other's files.
     lock = QLockFile(SERVER + ".lock" if os.name != "nt" else os.path.join(tempfile.gettempdir(), SERVER + ".lock"))
     if not lock.tryLock(200):
@@ -479,6 +480,7 @@ def run(arg, report=None):
                 break
             time.sleep(0.1)
         sys.exit(0)
+    keep_log()  # only the copy that runs: a PrtSc press starts a second one, which mustn't rotate the running log away
     app = App()
     if arg in ("region", "screen"):
         QTimer.singleShot(300, lambda: app.command(arg))
