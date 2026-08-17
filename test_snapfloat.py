@@ -601,6 +601,7 @@ try:
     assert app.recorder.busy and app.record_action.text() == "Stop recording"
     app.tray_click(sf.QSystemTrayIcon.Trigger)  # a tray click stops it
     assert wait_for(lambda: not app.recorder.busy), "recording never finished"
+    assert wait_for(lambda: app.thumbs), "its thumbnail never came (the first frame is read on a worker thread)"
     vid = app.thumbs[-1]
     assert vid.video and vid.path.suffix == ".mp4" and vid.path.read_bytes() == b"video" and vid.drag_file() == vid.path
     assert vid.path.with_suffix(".png").exists() and not vid.path.with_suffix(".log").exists() and not errors
@@ -619,6 +620,38 @@ try:
     assert errors == ["no screen"] and len(app.thumbs) == n, "a failed recording says why and shows nothing"
 finally:
     sf.record_cmd = real_cmd
+
+# audit fixes
+rec = sf.Recorder()
+done_rec = []
+rec.finished.connect(done_rec.append)
+rec.busy = True  # Stop while the desktop is still asking what to share: cancels instead of being lost
+rec.stop()
+rec.launch((None, None, None))
+assert rec.cancel and done_rec == [""] and not rec.busy and rec.proc is None
+rec2 = sf.Recorder()
+rec2.proc = sf.subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read(1)"], stdin=sf.subprocess.PIPE)
+rec2.busy = True
+rec2.shutdown()  # quitting stops a recording instead of orphaning it
+assert rec2.proc is None and not rec2.busy
+app.busy_since = 1e12  # a capture in progress (thumbnails hidden)...
+n = len(app.thumbs)
+app.show_shot(pix, capture=False)  # ...a thumbnail from elsewhere (Recent, a recording) doesn't end it
+assert app.busy_since == 1e12 and len(app.thumbs) == n + 1 and not app.thumbs[-1].isVisible()
+app.busy_since = 0.0
+app.scroller = object()  # a scrolling capture holds the capture lock however long it takes
+assert not app.start_capture()
+app.scroller = None
+for t in list(app.thumbs):
+    t.dismiss()
+app.show_shot(pix)
+app.combine_all()  # one screenshot: nothing to combine
+assert len(app.thumbs) == 1
+sel = sf.Selector(app.primaryScreen(), lambda p: None, shot=QPixmap(400, 300))
+sel.resize(400, 300)
+sel.origin = sf.QPoint(300, 200)
+sel.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(900, 700), QPointF(900, 700), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+assert sel.rect().contains(sel.sel), "a drag past the screen's edge stays on that screen"
 
 # --self-test checks a build end to end and exits non-zero on any failure
 r = sf.subprocess.run([sys.executable, "-m", "snapfloat", "--self-test"], capture_output=True, text=True, timeout=120,

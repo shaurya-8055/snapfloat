@@ -104,12 +104,12 @@ class Recorder(QObject):
     def __init__(self):
         super().__init__()
         self.proc = self.conn = None
-        self.busy = False
+        self.busy = self.cancel = False
         self._go.connect(self.launch)
         self._ended.connect(self.ended)
 
     def start(self):
-        self.busy = True
+        self.busy, self.cancel = True, False
         if WAYLAND:
             threading.Thread(target=lambda: self._go.emit(self.portal()), daemon=True).start()
         else:
@@ -128,6 +128,8 @@ class Recorder(QObject):
             if isinstance(src, Exception):
                 raise src
             self.conn, fd, node = src
+            if self.cancel:  # Stop was pressed while the desktop was still asking what to share
+                raise RuntimeError("cancelled")
             stem = tmp_dir() / time.strftime(f"Recording %Y-%m-%d at %H.%M.%S.{int(time.time() * 1000) % 1000:03d}")
             cmd, self.path = record_cmd(stem, fd, node)
             self.log = open(stem.with_suffix(".log"), "w+b")
@@ -145,7 +147,10 @@ class Recorder(QObject):
         threading.Thread(target=lambda: (self.proc.wait(), self._ended.emit()), daemon=True).start()
 
     def stop(self):
-        if not self.proc or self.proc.poll() is not None:
+        if self.proc is None:
+            self.cancel = self.busy  # still choosing what to share: don't start once that's answered
+            return
+        if self.proc.poll() is not None:
             return
         if WAYLAND:
             self.proc.send_signal(signal.SIGINT)  # gst-launch -e: finish the file, then exit
@@ -166,6 +171,18 @@ class Recorder(QObject):
         self.cleanup()
         self.finished.emit(str(self.path) if ok else "")
 
+    def shutdown(self):
+        """The app is quitting: end a recording first. Left alone, ffmpeg (Windows/X11) keeps grabbing the screen as
+        an orphan after we're gone, and its file is deleted with the temp folder."""
+        self.cancel = True
+        if self.proc and self.proc.poll() is None:
+            self.stop()
+            try:
+                self.proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.cleanup()
+
     def cleanup(self):
         if self.conn:
             self.conn.close()  # ends the portal session (and GNOME's "sharing the screen" indicator)
@@ -176,8 +193,8 @@ class Recorder(QObject):
         self.busy = False
 
 
-def poster(video):
-    """A recording's thumbnail: its first frame (saved beside it, for Recent) with a play badge."""
+def first_frame(video):
+    """Save a recording's first frame beside it (as .png). Seconds for a long video: call it off the UI thread."""
     png = video.with_suffix(".png")
     cmd = (["gst-launch-1.0", "-q", "filesrc", f"location={video}", "!", "decodebin", "!", "videoconvert", "!", "pngenc",
             "snapshot=true", "!", "filesink", f"location={png}"] if WAYLAND else
@@ -187,6 +204,11 @@ def poster(video):
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+def poster(video):
+    """A recording's thumbnail: its first frame (see first_frame) with a play badge."""
+    png = video.with_suffix(".png")
     pix = QPixmap(str(png))
     if pix.isNull():
         pix = QPixmap(640, 360)

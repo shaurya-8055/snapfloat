@@ -127,7 +127,9 @@ def ensure_gnome_extension():
     if not (WAYLAND and src.is_dir() and shutil.which("gsettings") and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "")):
         return
     fresh = not dst.exists()
-    if fresh or filecmp.dircmp(src, dst).diff_files:  # new install, or an updated AppImage with a newer extension
+    stale = any(not (dst / f.relative_to(src)).is_file() or not filecmp.cmp(f, dst / f.relative_to(src), shallow=False)
+                for f in src.rglob("*") if f.is_file())  # a changed file, or one a newer AppImage added
+    if fresh or stale:
         shutil.copytree(src, dst, dirs_exist_ok=True)
     exts = gsettings_list("org.gnome.shell", "enabled-extensions")
     if fresh and EXT_UUID not in exts:  # only on first install: respect a user who turned it off later
