@@ -500,6 +500,29 @@ steps = [(97, A), (180, A), (171, L), (333, A), (334, A), (500, A), (1000, L), (
 assert [fs.add(screen_at(t)) for t, _ in steps] == [w for _, w in steps]
 assert abs(fs.result().height() - (FH + 640 * K)) <= 1, fs.result().height()
 
+# a static sidebar with content beside the scrolling part (like Gmail's): matched on the part that moves, and trimmed
+# from the result instead of repeating down it
+SIDE = 120
+sidebar = page(SIDE, HEAD + VIEW + FOOT, 9)
+
+
+def with_side(top):
+    img = QImage(SIDE + W, HEAD + VIEW + FOOT, QImage.Format_RGB32)
+    qp = _QP(img)
+    qp.drawImage(0, 0, sidebar)
+    qp.drawImage(SIDE, 0, frame(top))
+    qp.end()
+    return img
+
+
+ss = sf.Stitcher(with_side(0))
+assert [ss.add(with_side(t)) for t in (150, 300, 500)] == [A, A, A]
+side_out = ss.result()
+assert side_out.width() < SIDE + W and abs(side_out.width() - W) <= (SIDE + W) // sf.SIG_W + 1, side_out.width()
+x0 = SIDE + W - side_out.width()  # where the trimmed result starts (at most the sidebar's width)
+assert side_out.height() == HEAD + VIEW + FOOT + 500 and 0 < x0 <= SIDE
+assert side_out.copy(SIDE - x0, HEAD, W, 500 + VIEW) == content.copy(0, 0, W, 500 + VIEW), "the list, pixel exact"
+
 full = page(800, 600, 4)
 
 # the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page
@@ -529,6 +552,7 @@ assert sc.timer is not None and sc.finishing
 settle()
 assert sc.timer is None and app.scroller is None
 assert app.thumbs[-1].full.toImage().convertToFormat(QImage.Format_RGB32) == expect
+assert app.recent[0][0] == app.thumbs[-1].path, "a scrolling capture goes into Recent like any screenshot"
 app.thumbs[-1].dismiss()
 
 # start-up: the screen is frozen, you drag the area on it, and every later grab is cropped to exactly that area
