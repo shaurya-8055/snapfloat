@@ -11,7 +11,8 @@ def main():
     # --self-test[=report.txt]: checks a build works on this machine (CI runs it on the AppImage and the exe)
     report = next((a.partition("=")[2] for a in sys.argv[1:] if a.partition("=")[0] == "--self-test"), None)
     if report is not None:
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"  # no display needed
+        if os.name != "nt":  # Windows always has a display, and its offscreen mode finds no fonts (blank text)
+            os.environ["QT_QPA_PLATFORM"] = "offscreen"  # no display needed
     elif "--uninstall" in sys.argv:
         uninstall()
         if "--quiet" in sys.argv:  # package managers (Scoop) uninstall without a popup
