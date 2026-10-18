@@ -9,6 +9,8 @@ import getpass, math, os, re, shlex, shutil, socket, subprocess, sys, tempfile, 
 from pathlib import Path
 
 APP = "SnapFloat"
+AUTHOR = "Shaurya Shakya"
+HOMEPAGE = "https://github.com/shaurya-8055/snapfloat"
 COMMANDS = ("region", "screen", "settings", "quit")
 EXT_UUID = "snapfloat@shaurya-8055.github.io"
 LEGACY_UUID = "snapfloat@snapfloat.github.io"  # 1.0 used this ID; uninstall cleans it up too
@@ -18,7 +20,13 @@ if os.name == "nt":
 else:
     SERVER = ADDR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), f"snapfloat-{os.getuid()}.sock")
 TMP = Path(tempfile.gettempdir()) / f"snapfloat-{getpass.getuser()}"
-CMD = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
+if os.environ.get("APPIMAGE"):  # inside an AppImage, sys.executable sits in a mount whose path changes every launch
+    CMD = [os.environ["APPIMAGE"]]
+elif getattr(sys, "frozen", False):
+    CMD = [sys.executable]
+else:
+    CMD = [sys.executable, str(Path(__file__).resolve())]
+BUNDLE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))  # where bundled files (the GNOME extension) live
 
 
 def send(cmd):
@@ -101,7 +109,8 @@ def uninstall(quit_running=True):
                             "--object-path", "/org/freedesktop/impl/portal/PermissionStore", "--method",
                             "org.freedesktop.impl.portal.PermissionStore.DeletePermission", "screenshot", "screenshot", "snapfloat"],
                            capture_output=True)
-        for f in (".config/autostart/snapfloat.desktop", ".local/bin/snapfloat", ".local/share/applications/snapfloat.desktop"):
+        for f in (".config/autostart/snapfloat.desktop", ".local/bin/snapfloat", ".local/share/applications/snapfloat.desktop",
+                  ".local/share/icons/hicolor/256x256/apps/snapfloat.png"):
             (home / f).unlink(missing_ok=True)
         for d in (".config/snapfloat", f".local/share/gnome-shell/extensions/{EXT_UUID}",
                   f".local/share/gnome-shell/extensions/{LEGACY_UUID}", ".local/share/snapfloat"):
@@ -113,7 +122,9 @@ ARG = None
 if __name__ == "__main__":
     if "--uninstall" in sys.argv:
         uninstall()
-        if os.name == "nt":  # the exe has no console to print to
+        if "--quiet" in sys.argv:  # package managers (Scoop) uninstall without a popup
+            pass
+        elif os.name == "nt":  # the exe has no console to print to
             import ctypes
             ctypes.windll.user32.MessageBoxW(0, "SnapFloat removed. Delete SnapFloat.exe to finish.", APP, 0)
         else:
@@ -185,10 +196,11 @@ def purge():
 
 
 def icon():
-    pix = QPixmap(64, 64)
+    pix = QPixmap(256, 256)  # drawn large, scaled down as needed: crisp in HiDPI trays and as the app-menu icon
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
+    p.scale(4, 4)
     p.setBrush(ACCENT)
     p.setPen(Qt.NoPen)
     p.drawRoundedRect(4, 4, 56, 56, 14, 14)
@@ -205,6 +217,7 @@ class Portal(QObject):
     done = Signal(str)
 
     def capture(self, interactive):
+        self.interactive = interactive
         bus = QDBusConnection.sessionBus()
         token = f"snapfloat{int(time.time() * 1000)}"
         path = f"/org/freedesktop/portal/desktop/request/{bus.baseService()[1:].replace('.', '_')}/{token}"
@@ -217,6 +230,8 @@ class Portal(QObject):
 
     @Slot("uint", "QVariantMap")
     def on_response(self, code, results):
+        if code == 2 and not self.interactive:  # silent full-screen shot refused (no permission): use the screenshot UI
+            return self.capture(True)
         self.done.emit(QUrl(results.get("uri", "")).toLocalFile() if code == 0 else "")
 
 
@@ -1350,6 +1365,21 @@ def gnome_bind(keys):
     return True
 
 
+def ensure_gnome_extension():
+    """AppImage users never run install.sh: put the bundled GNOME extension in place (active after the next login)."""
+    import filecmp
+    src = BUNDLE / "gnome-extension"
+    dst = Path.home() / ".local/share/gnome-shell/extensions" / EXT_UUID
+    if not (WAYLAND and src.is_dir() and shutil.which("gsettings") and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "")):
+        return
+    fresh = not dst.exists()
+    if fresh or filecmp.dircmp(src, dst).diff_files:  # new install, or an updated AppImage with a newer extension
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+    exts = gsettings_list("org.gnome.shell", "enabled-extensions")
+    if fresh and EXT_UUID not in exts:  # only on first install: respect a user who turned it off later
+        subprocess.run(["gsettings", "set", "org.gnome.shell", "enabled-extensions", str(exts + [EXT_UUID])], capture_output=True)
+
+
 def gnome_ext_problem():
     """None when the GNOME extension is placing thumbnails, else a sentence saying what to do."""
     if not WAYLAND or not shutil.which("gnome-extensions"):
@@ -1567,6 +1597,9 @@ class Settings(QDialog):
         root.addWidget(self.card("General", general))
 
         buttons = QHBoxLayout()
+        credit = QLabel(f'Made by {AUTHOR} · <a href="{HOMEPAGE}" style="color: {ACCENT.name()}; text-decoration: none;">GitHub</a>',
+                        objectName="hint", openExternalLinks=True)
+        buttons.addWidget(credit)
         buttons.addStretch()
         buttons.addWidget(QPushButton("Cancel", clicked=self.reject, cursor=Qt.PointingHandCursor))
         save = QPushButton("Save", objectName="primary", clicked=self.accept, cursor=Qt.PointingHandCursor, default=True)
@@ -1671,11 +1704,12 @@ class App(QApplication):
         self.clipboard().dataChanged.connect(self.on_clipboard)
 
         self.tray = QSystemTrayIcon(icon(), self)
-        self.tray.setToolTip(APP)
+        self.tray.setToolTip(f"{APP} · made by {AUTHOR}")
         self.tray.activated.connect(lambda r: self.region() if r == QSystemTrayIcon.Trigger else None)
         self.menu = QMenu()
         self.tray.setContextMenu(self.menu)
         self.tray.show()
+        ensure_gnome_extension()
         self.apply()
         problem = gnome_ext_problem()
         if problem:

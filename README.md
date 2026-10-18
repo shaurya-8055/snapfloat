@@ -68,13 +68,29 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 ## Install
 
 ### Windows
+**With [Scoop](https://scoop.sh)** (updates with `scoop update snapfloat`):
+```powershell
+scoop bucket add snapfloat https://github.com/shaurya-8055/scoop-bucket
+scoop install snapfloat
+```
+**Or by hand:**
 1. Download `SnapFloat.exe` from [Releases](https://github.com/shaurya-8055/snapfloat/releases).
 2. Run it. It sits in the system tray (click `^` near the clock if you don't see it).
 3. Press `Ctrl+Shift+4` and select an area.
 
 > Windows SmartScreen may warn about an unknown publisher because the exe isn't code-signed. Click **More info → Run anyway**, or [build it yourself](#build-from-source).
 
-### Ubuntu / Debian (GNOME)
+### Linux: AppImage (any distro, no install)
+1. Download `SnapFloat-x86_64.AppImage` from [Releases](https://github.com/shaurya-8055/snapfloat/releases).
+2. Make it executable and run it:
+   ```sh
+   chmod +x SnapFloat-x86_64.AppImage && ./SnapFloat-x86_64.AppImage
+   ```
+3. On GNOME, **log out and back in once**: SnapFloat installs its small GNOME extension on first run, and GNOME loads it at login.
+
+It starts at login from then on. For *Copy text* and *Hide private info*, also install Tesseract (`sudo apt install tesseract-ocr`, `sudo dnf install tesseract`). If your system lacks FUSE, run it with `--appimage-extract-and-run`.
+
+### Ubuntu / Debian (GNOME), from source
 ```sh
 git clone https://github.com/shaurya-8055/snapfloat
 cd snapfloat
@@ -232,13 +248,16 @@ pip install pyinstaller
 pyinstaller --onefile --noconsole --name SnapFloat snapfloat.py   # → dist/SnapFloat.exe
 ```
 
-**Releases:** push a tag like `v1.0.0`. GitHub Actions (`.github/workflows/release.yml`) builds `SnapFloat.exe` and attaches it to the release. You can also run the workflow manually from the Actions tab to get the exe as a build artifact.
+**AppImage:** `bash packaging/build-appimage.sh` (with Python 3.12) → `dist/SnapFloat-x86_64.AppImage`
+
+**Releases:** push a tag like `v1.1.0`. GitHub Actions (`.github/workflows/release.yml`) builds `SnapFloat.exe` and `SnapFloat-x86_64.AppImage` and attaches both to the release. You can also run the workflow manually from the Actions tab to get them as build artifacts.
 
 ## Project structure
 ```
 snapfloat.py              the whole app: capture, thumbnail, markup editor, settings, hotkeys, tray
 gnome-extension/          GNOME Shell extension: corner placement + focus handling on Wayland
 install.sh                Linux installer / updater / uninstaller
+packaging/                icon, desktop entry, AppImage build script
 test_snapfloat.py         smoke test (runs without a display)
 .github/workflows/        Windows exe build on release
 ```
@@ -270,7 +289,8 @@ Contributions are welcome: bug reports, fixes, and features from the roadmap.
 - [x] Recent screenshots, delayed capture, flick to dismiss, smaller files, shutter sound and flash
 - [x] Copy text (OCR), one-click hide private info, numbered steps, beautify, combine, drag all
 - [x] One-key capture with `PrtSc`
-- [ ] AppImage / Flatpak / `.deb` packages
+- [x] AppImage, Scoop
+- [ ] winget, Flathub
 - [ ] KDE Plasma: corner placement via a KWin script
 - [ ] GNOME extension on extensions.gnome.org (submitted, in review: [SnapFloat](https://extensions.gnome.org/extension/11361/snapfloat/))
 
