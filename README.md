@@ -14,6 +14,7 @@ Nothing is saved to your Screenshots folder, so there's no pile of old screensho
 - [Features](#features)
 - [Install](#install)
 - [How to use](#how-to-use)
+- [Markup](#markup)
 - [Settings](#settings)
 - [Privacy: where screenshots go](#privacy-where-screenshots-go)
 - [Platform notes](#platform-notes)
@@ -33,10 +34,14 @@ macOS fixed this years ago with its floating thumbnail. SnapFloat brings the sam
 - **Floating thumbnail**, smooth slide-in, in the corner you choose
 - **Drag & drop** into any app (it's also copied to the clipboard, so `Ctrl+V` works too)
 - **Auto-dismiss** after N seconds, with a countdown bar; hovering pauses it, `0` keeps it until you close it
-- **Click** to open, **right-click** for Copy, Save, Save As, Pin, Close
+- **Quick markup:** click the thumbnail to add arrows, boxes, highlighter, text, crop, and **blur to hide phone numbers, emails or OTPs** before you send
+- **Flick to dismiss:** throw the thumbnail toward the screen edge, like on a Mac
+- **Recent screenshots** in the tray menu: grab one again after its thumbnail is gone
+- **Delayed capture** (3, 5 or 10 seconds) with a countdown ring, for menus and hover states
+- **Smaller files** (optional): drag a compact JPG instead of a full-size PNG for faster chat uploads
 - **Stacks** several shots; the newest sits in the corner, and the rest glide into place
 - **Save on timeout** (optional) to a folder of your choice
-- **Custom shortcuts**, start at login, tray icon
+- **Custom shortcuts**, start at login, tray icon, shutter sound and screen flash
 - **Windows bonus:** optionally show a thumbnail for `Win+Shift+S` / `PrtSc` captures too
 - **Lightweight:** one Python file, no telemetry, no network access
 
@@ -87,10 +92,32 @@ Then bind these commands in your desktop's keyboard settings:
 |---|---|
 | Drag it into an app | The screenshot is sent there, and the thumbnail goes away |
 | `Ctrl+V` anywhere | Pastes the screenshot (it's already on your clipboard) |
-| Click | Opens it in your image viewer |
+| Click | Opens [markup](#markup) |
+| Flick toward the screen edge | Dismisses it (a short flick springs back) |
 | Hover | Pauses the countdown |
-| Click the **✕** | Closes it (the file is deleted) |
-| Right-click | Copy · Open · Save · Save As · Pin · Close |
+| Click the **✕** | Closes it (still available under *Recent*) |
+| Right-click | Mark up · Copy · Open in viewer · Save · Save As · Pin · Close |
+
+### Tray menu
+| Item | What it does |
+|---|---|
+| Capture region / Capture screen | Same as the shortcuts |
+| Capture after… | 3, 5 or 10 second countdown, then a region capture. Click the ring to cancel |
+| Recent | The last 10 screenshots of this session. Click one to bring its thumbnail back and drag it again |
+
+## Markup
+Click a thumbnail to open the editor. **Done** updates the thumbnail, its file and the clipboard, so you can drag the edited version straight away.
+
+| Tool | Key | Use it for |
+|---|---|---|
+| Arrow | `A` | Point at something |
+| Box | `R` | Frame an area |
+| Highlighter | `H` | Mark text, like a marker pen |
+| Text | `T` | Click, type, press `Enter` (`Esc` drops it) |
+| Blur | `B` | Drag over phone numbers, emails, OTPs or faces. Uses a coarse mosaic, so the text can't be recovered |
+| Crop | `C` | Drag the area to keep |
+
+`Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Enter` done · `Esc` cancel. Pick a colour from the swatches; line widths match what you see on screen.
 
 ### Command line
 ```sh
@@ -110,17 +137,19 @@ Open from the tray icon → **Settings…**
 | Position | Which screen corner | bottom-right |
 | Size | Thumbnail size | 220 px |
 | Copy to clipboard | Also put every shot on the clipboard | on |
+| Send smaller files | Drag a JPG (max 1920 px) instead of the full PNG | off |
 | Save when it disappears | Keep a copy in the save folder after timeout | off |
 | Save folder | Where *Save* puts files | `~/Pictures/Screenshots` |
 | Capture region / screen | Global shortcuts. Click the field and press keys; Backspace clears it | `Ctrl+Shift+4` / `Ctrl+Shift+3` |
 | Start at login | Launch automatically | off |
+| Shutter sound / Screen flash | (Windows/X11) Feedback when a shot is taken. On Wayland, GNOME already does both | on |
 | Also catch copied images | (Windows/X11) Show a thumbnail for `Win+Shift+S`/`PrtSc` captures | off |
 
 Settings are stored in `~/.config/snapfloat/snapfloat.conf` (Linux) or the registry under `HKCU\Software\snapfloat` (Windows).
 
 ## Privacy: where screenshots go
 - Screenshots are written to a private temp folder (`/tmp/snapfloat-<user>` or `%TEMP%\snapfloat-<user>`).
-- When a thumbnail closes, its file is deleted about 2 minutes later, which gives the app you dropped it into time to read it. All of them are deleted when SnapFloat quits.
+- The last 10 stay there so *Recent* can bring them back; older ones are deleted as new ones arrive. All of them are deleted when SnapFloat quits.
 - Nothing goes to your Screenshots folder unless you click **Save** or turn on *Save when it disappears*.
 - SnapFloat makes no network connections.
 
@@ -173,7 +202,7 @@ pyinstaller --onefile --noconsole --name SnapFloat snapfloat.py   # → dist/Sna
 
 ## Project structure
 ```
-snapfloat.py              the whole app: capture, thumbnail, settings, hotkeys, tray
+snapfloat.py              the whole app: capture, thumbnail, markup editor, settings, hotkeys, tray
 gnome-extension/          GNOME Shell extension: corner placement + focus handling on Wayland
 install.sh                Linux installer / updater / uninstaller
 test_snapfloat.py         smoke test (runs without a display)
@@ -203,7 +232,8 @@ Contributions are welcome: bug reports, fixes, and features from the roadmap.
 - UI work must stay smooth. Draw expensive things once (see `Thumb.render_card`) and only fade or move them in animation frames.
 
 ## Roadmap
-- [ ] Quick markup on click: arrow, highlight, **blur** for hiding private info
+- [x] Quick markup on click: arrow, box, highlighter, text, crop, **blur** for hiding private info
+- [x] Recent screenshots, delayed capture, flick to dismiss, smaller files, shutter sound and flash
 - [ ] Copy text from a screenshot (OCR)
 - [ ] AppImage / Flatpak / `.deb` packages
 - [ ] KDE Plasma: corner placement via a KWin script

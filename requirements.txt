@@ -1,1 +1,2 @@
-PySide6-Essentials>=6.6
+# 6.10+ sends an empty drag image on Wayland, so the dragged thumbnail would be invisible
+PySide6-Essentials>=6.9,<6.10
