@@ -143,6 +143,7 @@ Wayland is stricter than X11, which is the main reason a tool like this didn't e
 |---|---|
 | Thumbnail appears in the middle of the screen (GNOME) | Log out and back in once after installing. Check with `gnome-extensions info snapfloat@snapfloat.github.io` (should say `ACTIVE`) |
 | Shortcut does nothing (GNOME) | Check *Settings → Keyboard → Custom Shortcuts* for "SnapFloat region". Another shortcut may use the same keys |
+| `Ctrl+Shift+3` (full screen) does nothing on Wayland, but region capture works | GNOME needs permission for silent screenshots and can't ask a tray app. Re-run `./install.sh`, or run `gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot snapfloat "['yes']"` |
 | No tray icon (GNOME) | Needs the AppIndicator extension (enabled by default on Ubuntu; on Fedora install *AppIndicator and KStatusNotifierItem Support*) |
 | Drag doesn't drop into an app | Paste with `Ctrl+V` instead, and [open an issue](https://github.com/shaurya-8055/snapfloat/issues) naming the app |
 | `Could not load the Qt platform plugin "xcb"` | `sudo apt install libxcb-cursor0` |

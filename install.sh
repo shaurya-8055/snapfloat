@@ -11,6 +11,9 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 if [ "${1:-}" = "--uninstall" ]; then
     "$BIN" --quit 2>/dev/null || true
     gnome-extensions disable "$UUID" 2>/dev/null || true
+    gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+        --object-path /org/freedesktop/impl/portal/PermissionStore \
+        --method org.freedesktop.impl.portal.PermissionStore.DeletePermission screenshot screenshot snapfloat >/dev/null 2>&1 || true
     for k in region screen; do
         gsettings reset-recursively "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/snapfloat-$k/" 2>/dev/null || true
     done
@@ -53,6 +56,16 @@ if sys.argv[1] not in cur:
 PY
         NEED_RELOGIN=1
     fi
+fi
+
+# Wayland: full-screen capture (Ctrl+Shift+3) is a silent screenshot, which GNOME only allows after an "Allow"
+# dialog that it refuses to show for a tray app. Record that permission up front, as clicking Allow would.
+if [ "${XDG_SESSION_TYPE:-}" = wayland ] && command -v gdbus >/dev/null; then
+    gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+        --object-path /org/freedesktop/impl/portal/PermissionStore \
+        --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
+        screenshot true screenshot snapfloat "['yes']" >/dev/null 2>&1 \
+        && echo "Allowed SnapFloat to take full-screen screenshots (./install.sh --uninstall revokes it)."
 fi
 
 "$BIN" --quit 2>/dev/null || true
