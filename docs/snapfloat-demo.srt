@@ -1,0 +1,106 @@
+1
+00:00:00,300 --> 00:00:01,264
+Meet SnapFloat.
+
+2
+00:00:01,314 --> 00:00:06,094
+The Mac screenshot thumbnail, for Linux
+and Windows, and then some.
+
+3
+00:00:06,733 --> 00:00:09,897
+Press Print Screen, and select what you
+want to share.
+
+4
+00:00:10,533 --> 00:00:12,586
+Your screenshot floats in the corner.
+
+5
+00:00:12,636 --> 00:00:15,387
+Nothing piles up in your Screenshots
+folder.
+
+6
+00:00:16,033 --> 00:00:18,786
+Drag it straight into any app, like a
+chat.
+
+7
+00:00:18,836 --> 00:00:19,738
+That's it.
+
+8
+00:00:20,367 --> 00:00:22,567
+Click the thumbnail to mark it up.
+
+9
+00:00:22,617 --> 00:00:26,706
+One click hides phone numbers, emails, and
+one-time codes.
+
+10
+00:00:27,333 --> 00:00:30,027
+Add arrows, numbered steps, and text.
+
+11
+00:00:30,077 --> 00:00:31,514
+Then press Done.
+
+12
+00:00:32,133 --> 00:00:34,295
+Need the words, not the picture?
+
+13
+00:00:34,345 --> 00:00:37,637
+Drag over any part, and copy just that
+text.
+
+14
+00:00:38,267 --> 00:00:41,547
+Beautify gives it a clean background,
+ready to post.
+
+15
+00:00:42,267 --> 00:00:42,945
+Took a few?
+
+16
+00:00:42,995 --> 00:00:47,817
+Combine them into one image, or hold Shift
+and drag them all at once.
+
+17
+00:00:48,467 --> 00:00:49,704
+Closed one too early?
+
+18
+00:00:49,754 --> 00:00:53,007
+It's still there, under Recent, in the
+tray menu.
+
+19
+00:00:53,633 --> 00:00:56,542
+To catch a menu, use a delayed capture.
+
+20
+00:00:58,433 --> 00:00:59,423
+Done with it?
+
+21
+00:00:59,473 --> 00:01:01,244
+Just flick it away.
+
+22
+00:01:01,867 --> 00:01:05,600
+Pick the corner, the timing, the size, and
+your shortcuts.
+
+23
+00:01:06,233 --> 00:01:08,912
+SnapFloat is free and open source.
+
+24
+00:01:08,962 --> 00:01:10,576
+Get it on GitHub.
+

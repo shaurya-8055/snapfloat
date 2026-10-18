@@ -391,7 +391,8 @@ class Countdown(QWidget):
 # ---------- markup ----------
 
 TOOLS = [("arrow", "Arrow", "A"), ("rect", "Box", "R"), ("highlight", "Highlighter", "H"), ("text", "Text", "T"),
-         ("step", "Numbered steps", "N"), ("blur", "Blur: hide private info", "B"), ("crop", "Crop", "C")]
+         ("step", "Numbered steps", "N"), ("blur", "Blur: hide private info", "B"), ("crop", "Crop", "C"),
+         ("ocr", "Copy text from an area: drag a box over it", "X")]
 COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]
 TEXT_PX = 22  # on-screen text size while typing; stored in image pixels so it looks the same after export
 
@@ -629,6 +630,15 @@ def tool_icon(name, fg):
         p.drawEllipse(QRectF(3, 7, 16, 8))
         p.drawEllipse(QRectF(9, 9, 4, 4))
         p.drawLine(QPointF(4, 18), QPointF(18, 4))
+    elif name == "ocr":  # a dashed selection box around a "T"
+        p.setPen(QPen(c, 1.5, Qt.DashLine))
+        p.drawRect(QRectF(2.5, 4.5, 17, 13))
+        p.setPen(c)
+        f = QFont()
+        f.setPixelSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(2.5, 4.5, 17, 13), Qt.AlignCenter, "T")
     elif name == "copytext":
         p.drawRoundedRect(QRectF(7, 3, 12, 14), 2, 2)
         p.drawLine(QPointF(10, 7.5), QPointF(16, 7.5))
@@ -730,9 +740,9 @@ class Canvas(QWidget):
             p.setPen(QPen(QColor("white"), 1.5, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRect(cr)
-        if self.cur and self.cur["t"] == "blur":
+        if self.cur and self.cur["t"] in ("blur", "ocr"):
             r = self.cur["r"]
-            p.setPen(QPen(QColor("white"), 1.5, Qt.DashLine))
+            p.setPen(QPen(ACCENT if self.cur["t"] == "ocr" else QColor("white"), 1.5, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRect(QRectF(self.off + r.topLeft() * self.k, r.size() * self.k))
 
@@ -761,7 +771,10 @@ class Canvas(QWidget):
         if cur:
             size = cur["path"].length() if cur["t"] == "highlight" else QLineF(cur["a"], cur["b"]).length()
             if size * self.k > 4:  # ignore stray clicks
-                self.push(cur)
+                if cur["t"] == "ocr":
+                    self.ed.copy_text_area(cur["r"])  # a selection, not a mark: nothing is drawn into the shot
+                else:
+                    self.push(cur)
             self.update()
 
     def push(self, shape):
@@ -833,8 +846,11 @@ class Editor(QDialog):
         h.setContentsMargins(12, 8, 12, 8)
         h.setSpacing(4)
         self.tools = QButtonGroup(self)
+        ocr = bool(shutil.which("tesseract"))
         for name, tip, key in TOOLS:
-            b = self.tool_button(name, f"{tip}  ({key})", pal["fg"], checkable=True, checked=name == self.tool)
+            b = self.tool_button(name, f"{tip}  ({key})" if name != "ocr" or ocr else OCR_HINT, pal["fg"],
+                                 checkable=True, checked=name == self.tool)
+            b.setEnabled(name != "ocr" or ocr)
             b.clicked.connect(lambda _=False, n=name: self.set_tool(n))
             b.setProperty("tool", name)
             self.tools.addButton(b)
@@ -857,10 +873,10 @@ class Editor(QDialog):
         h.addWidget(undo)
         h.addWidget(redo)
         h.addWidget(self.vsep())
-        ocr = bool(shutil.which("tesseract"))
         private = self.tool_button("private", "Hide private info: blur emails, phone numbers, OTPs" if ocr else OCR_HINT, pal["fg"])
         private.clicked.connect(self.hide_private)
-        copytext = self.tool_button("copytext", "Copy text from the screenshot" if ocr else OCR_HINT, pal["fg"])
+        copytext = self.tool_button("copytext", "Copy all the text (for just a part, drag a box with the X tool)" if ocr else OCR_HINT,
+                                    pal["fg"])
         copytext.clicked.connect(self.copy_text)
         for b in (private, copytext):
             b.setEnabled(ocr)
@@ -938,6 +954,18 @@ class Editor(QDialog):
             else:
                 self.say("Nothing private found" if tsv is not None else "Couldn't read this screenshot")
         run_ocr(self, self.canvas.img, True, done)
+
+    def copy_text_area(self, r):
+        area = r.toRect().intersected(self.canvas.img.rect())
+        if area.width() < 4 or area.height() < 4:
+            return
+        self.setCursor(Qt.BusyCursor)
+        self.say("Reading text…")
+
+        def done(text, _scale):
+            self.unsetCursor()
+            self.say(ocr_message(text))
+        run_ocr(self, self.canvas.img.copy(area), False, done)
 
     def copy_text(self):
         self.setCursor(Qt.BusyCursor)
