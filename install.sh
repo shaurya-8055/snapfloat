@@ -4,25 +4,19 @@ set -euo pipefail
 DIR="$HOME/.local/share/snapfloat"
 BIN="$HOME/.local/bin/snapfloat"
 APPS="$HOME/.local/share/applications/snapfloat.desktop"
-UUID="snapfloat@snapfloat.github.io"
+UUID="snapfloat@shaurya-8055.github.io"
+LEGACY_UUID="snapfloat@snapfloat.github.io"  # the 1.0 ID
 EXT="$HOME/.local/share/gnome-shell/extensions/$UUID"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "${1:-}" = "--uninstall" ]; then
-    "$BIN" --quit 2>/dev/null || true
-    gnome-extensions disable "$UUID" 2>/dev/null || true
-    gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
-        --object-path /org/freedesktop/impl/portal/PermissionStore \
-        --method org.freedesktop.impl.portal.PermissionStore.DeletePermission screenshot screenshot snapfloat >/dev/null 2>&1 || true
-    for k in region screen; do
-        gsettings reset-recursively "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/snapfloat-$k/" 2>/dev/null || true
-    done
-    rm -rf "$DIR" "$EXT" "$BIN" "$APPS" "$HOME/.config/autostart/snapfloat.desktop" "$HOME/.config/snapfloat"
-    echo "SnapFloat removed."
+    # the app's own uninstall is stdlib-only, so system python works even if the install's venv is already gone
+    python3 "$SRC/snapfloat.py" --uninstall
     exit 0
 fi
 
-dpkg -s python3-venv libxcb-cursor0 >/dev/null 2>&1 || sudo apt-get install -y python3-venv libxcb-cursor0
+# tesseract-ocr powers "Copy text" and "Hide private info"
+dpkg -s python3-venv libxcb-cursor0 tesseract-ocr >/dev/null 2>&1 || sudo apt-get install -y python3-venv libxcb-cursor0 tesseract-ocr
 mkdir -p "$DIR" "$(dirname "$BIN")" "$(dirname "$APPS")"
 cp "$SRC/snapfloat.py" "$DIR/"
 [ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv"
@@ -44,6 +38,17 @@ DESKTOP
 # GNOME on Wayland: the extension puts thumbnails in the corner (apps aren't allowed to)
 NEED_RELOGIN=0
 if command -v gnome-extensions >/dev/null; then
+    # 1.0's extension ID: drop its files (a running copy keeps working until logout); forget it once it isn't loaded
+    rm -rf "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID"
+    if ! gnome-extensions info "$LEGACY_UUID" 2>/dev/null | grep -q ACTIVE; then
+        python3 - "$LEGACY_UUID" <<'PY'
+import ast, subprocess, sys
+cur = subprocess.run(["gsettings", "get", "org.gnome.shell", "enabled-extensions"], capture_output=True, text=True).stdout
+cur = ast.literal_eval(cur.replace("@as", "").strip() or "[]")
+if sys.argv[1] in cur:
+    subprocess.run(["gsettings", "set", "org.gnome.shell", "enabled-extensions", str([e for e in cur if e != sys.argv[1]])])
+PY
+    fi
     mkdir -p "$EXT"
     cp "$SRC"/gnome-extension/* "$EXT/"
     if ! gnome-extensions enable "$UUID" 2>/dev/null; then
@@ -72,6 +77,6 @@ fi
 "$BIN" --quit 2>/dev/null || true
 sleep 1
 nohup "$BIN" >/dev/null 2>&1 &
-echo "SnapFloat installed and running. Ctrl+Shift+4 = region, Ctrl+Shift+3 = full screen."
+echo "SnapFloat installed and running. PrtSc (or Ctrl+Shift+4) = region, Shift+PrtSc (or Ctrl+Shift+3) = full screen."
 [ "$NEED_RELOGIN" = 1 ] && echo "Log out and back in once to activate the GNOME extension (corner placement)."
 exit 0

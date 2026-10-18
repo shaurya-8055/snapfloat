@@ -1,7 +1,19 @@
 {
-  "uuid": "snapfloat@snapfloat.github.io",
+  "uuid": "snapfloat@shaurya-8055.github.io",
   "name": "SnapFloat",
   "description": "Keeps SnapFloat screenshot thumbnails in the screen corner and on top, without stealing focus. Wayland doesn't let apps do this themselves.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50",
+    "51",
+    "52",
+    "53",
+    "54",
+    "55"
+  ],
   "url": "https://github.com/shaurya-8055/snapfloat"
 }

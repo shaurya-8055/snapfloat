@@ -5,13 +5,15 @@
 Take a screenshot and a thumbnail floats in the corner of your screen. Drag it straight into WhatsApp, Slack, Discord, Gmail, ChatGPT, or any other app.
 Nothing is saved to your Screenshots folder, so there's no pile of old screenshots to clean up later.
 
-<p align="center"><img src="docs/settings.png" width="420" alt="SnapFloat settings window"></p>
+<p align="center"><img src="docs/demo.gif" width="760" alt="SnapFloat demo: press PrtSc, mark up and hide private info, drag into a chat"></p>
+<p align="center"><a href="docs/snapfloat-demo.mp4">▶ Watch the demo video (MP4)</a></p>
 
 ---
 
 ## Contents
 - [Why](#why)
 - [Features](#features)
+- [Beyond macOS](#beyond-macos)
 - [Install](#install)
 - [How to use](#how-to-use)
 - [Markup](#markup)
@@ -43,7 +45,25 @@ macOS fixed this years ago with its floating thumbnail. SnapFloat brings the sam
 - **Save on timeout** (optional) to a folder of your choice
 - **Custom shortcuts**, start at login, tray icon, shutter sound and screen flash
 - **Windows bonus:** optionally show a thumbnail for `Win+Shift+S` / `PrtSc` captures too
-- **Lightweight:** one Python file, no telemetry, no network access
+- **Simple:** one Python file, no telemetry, no network access (about 140 MB of RAM, mostly the Qt toolkit)
+
+## Beyond macOS
+Things SnapFloat does that the macOS screenshot thumbnail doesn't:
+
+| Feature | How |
+|---|---|
+| **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and blurs them. One `Ctrl+Z` brings them back |
+| **Copy text from a screenshot** | Right-click → *Copy text*, or the copy button in markup (OCR) |
+| **Blur** | A real redaction tool. Mac markup has no blur |
+| **Numbered steps** | Markup tool `N`: click to drop 1, 2, 3… badges for how-to guides |
+| **Beautify** | Right-click → *Beautify*: gradient background, rounded corners and shadow, ready for social media |
+| **Combine** | Right-click → *Combine all into one*: several screenshots become one image to send |
+| **Drag all at once** | Hold `Shift` while dragging: every visible screenshot goes in one drop |
+| **Recent** | Tray → *Recent*: grab a screenshot again after its thumbnail is gone |
+| **Smaller files** | Send a compact JPG instead of a huge PNG |
+| **One-key capture** | `PrtSc` for a region, `Shift+PrtSc` for the whole screen |
+
+*Hide private info* and *Copy text* use the free [Tesseract](https://github.com/tesseract-ocr/tesseract) OCR engine. `install.sh` installs it on Ubuntu/Debian; without it those two options are greyed out. Everything runs on your computer and nothing is uploaded.
 
 ## Install
 
@@ -65,7 +85,7 @@ The installer also registers the shortcuts in *Settings → Keyboard → Custom 
 
 ### Other Linux desktops (KDE, XFCE, …)
 ```sh
-pip install -r requirements.txt
+pip install --ignore-requires-python -r requirements.txt
 python3 snapfloat.py
 ```
 Then bind these commands in your desktop's keyboard settings:
@@ -77,26 +97,30 @@ Then bind these commands in your desktop's keyboard settings:
 ### Requirements
 - Python 3.9+ (not needed for the Windows exe)
 - Linux: an X11 session, or a Wayland session with `xdg-desktop-portal` (default on Ubuntu, Fedora, and most others)
+- Optional: `tesseract-ocr` for *Copy text* and *Hide private info* (`install.sh` adds it)
 
 ## How to use
 
 ### Shortcuts (default; change them in Settings)
 | Keys | Action |
 |---|---|
-| `Ctrl+Shift+4` | Capture a region |
-| `Ctrl+Shift+3` | Capture the whole screen |
+| `PrtSc` | Capture a region (one key) |
+| `Shift+PrtSc` | Capture the whole screen |
+| `Ctrl+Shift+4` / `Ctrl+Shift+3` | Same, Mac-style; work alongside |
+| Click the tray icon | Capture a region |
 | `Esc` / right-click | Cancel a region selection (Windows/X11) |
 
 ### The thumbnail
 | Do this | And this happens |
 |---|---|
 | Drag it into an app | The screenshot is sent there, and the thumbnail goes away |
+| `Shift` + drag | Sends **all** visible screenshots at once |
 | `Ctrl+V` anywhere | Pastes the screenshot (it's already on your clipboard) |
 | Click | Opens [markup](#markup) |
 | Flick toward the screen edge | Dismisses it (a short flick springs back) |
 | Hover | Pauses the countdown |
 | Click the **✕** | Closes it (still available under *Recent*) |
-| Right-click | Mark up · Copy · Open in viewer · Save · Save As · Pin · Close |
+| Right-click | Mark up · Copy · Copy text · Beautify · Combine all · Open in viewer · Save · Save As · Pin · Close |
 
 ### Tray menu
 | Item | What it does |
@@ -114,8 +138,11 @@ Click a thumbnail to open the editor. **Done** updates the thumbnail, its file a
 | Box | `R` | Frame an area |
 | Highlighter | `H` | Mark text, like a marker pen |
 | Text | `T` | Click, type, press `Enter` (`Esc` drops it) |
+| Numbered steps | `N` | Click to place 1, 2, 3… badges |
 | Blur | `B` | Drag over phone numbers, emails, OTPs or faces. Uses a coarse mosaic, so the text can't be recovered |
 | Crop | `C` | Drag the area to keep |
+
+Toolbar buttons: **👁 Hide private info** (auto-blurs emails, phone numbers, OTPs, card numbers; one undo restores them) and **Copy text**.
 
 `Ctrl+Z` undo · `Ctrl+Shift+Z` redo · `Enter` done · `Esc` cancel. Pick a colour from the swatches; line widths match what you see on screen.
 
@@ -131,6 +158,8 @@ snapfloat --quit       # quit
 ## Settings
 Open from the tray icon → **Settings…**
 
+<p align="center"><img src="docs/settings.png" width="420" alt="SnapFloat settings window"></p>
+
 | Setting | What it does | Default |
 |---|---|---|
 | Show for | Seconds the thumbnail stays; `0` = until you close it | 6 s |
@@ -140,8 +169,9 @@ Open from the tray icon → **Settings…**
 | Send smaller files | Drag a JPG (max 1920 px) instead of the full PNG | off |
 | Save when it disappears | Keep a copy in the save folder after timeout | off |
 | Save folder | Where *Save* puts files | `~/Pictures/Screenshots` |
-| Capture region / screen | Global shortcuts. Click the field and press keys; Backspace clears it | `Ctrl+Shift+4` / `Ctrl+Shift+3` |
-| Start at login | Launch automatically | off |
+| Print Screen key | `PrtSc` = region, `Shift+PrtSc` = whole screen. Takes those keys over from GNOME (its `Alt+PrtSc` window shot stays) or from Windows' Snipping Tool; turning it off or uninstalling gives them back | on |
+| Capture region / screen | Extra global shortcuts. Click the field and press keys; Backspace clears it | `Ctrl+Shift+4` / `Ctrl+Shift+3` |
+| Start at login | Launch automatically, so the first shortcut after a reboot is instant | on |
 | Shutter sound / Screen flash | (Windows/X11) Feedback when a shot is taken. On Wayland, GNOME already does both | on |
 | Also catch copied images | (Windows/X11) Show a thumbnail for `Win+Shift+S`/`PrtSc` captures | off |
 
@@ -161,7 +191,7 @@ Wayland is stricter than X11, which is the main reason a tool like this didn't e
 - **Placement:** Wayland doesn't let apps position their windows or keep them on top. The bundled GNOME Shell extension (`gnome-extension/`) does that for SnapFloat's thumbnails. It touches only windows titled `snapfloat-thumb …`, and it also stops thumbnails from taking focus away from the app you're typing in. Without it, thumbnails still work but open wherever GNOME places them.
 - **Shortcuts:** apps can't grab global keys, so SnapFloat registers GNOME custom shortcuts that run `snapfloat --region` / `--screen`.
 
-**Want the `Print` key?** GNOME Settings → Keyboard → View and Customize Shortcuts → Screenshots: clear *Take a screenshot interactively*. Then set SnapFloat's region shortcut to `Print`.
+**The `PrtSc` key** is SnapFloat's by default (Settings → *Print Screen key*). Region capture still opens GNOME's own screenshot UI; SnapFloat just keeps the result out of your Screenshots folder.
 
 ### Windows
 - Shortcuts are real global hotkeys. If one is taken by another app, SnapFloat shows a tray message, so pick another.
@@ -170,7 +200,8 @@ Wayland is stricter than X11, which is the main reason a tool like this didn't e
 ## Troubleshooting
 | Problem | Fix |
 |---|---|
-| Thumbnail appears in the middle of the screen (GNOME) | Log out and back in once after installing. Check with `gnome-extensions info snapfloat@snapfloat.github.io` (should say `ACTIVE`) |
+| Settings says the extension is out of date (after a GNOME upgrade) | Update SnapFloat (`git pull && ./install.sh`) and log out and back in |
+| Thumbnail appears in the middle of the screen (GNOME) | Log out and back in once after installing. Check with `gnome-extensions info snapfloat@shaurya-8055.github.io` (should say `ACTIVE`) |
 | Shortcut does nothing (GNOME) | Check *Settings → Keyboard → Custom Shortcuts* for "SnapFloat region". Another shortcut may use the same keys |
 | `Ctrl+Shift+3` (full screen) does nothing on Wayland, but region capture works | GNOME needs permission for silent screenshots and can't ask a tray app. Re-run `./install.sh`, or run `gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot snapfloat "['yes']"` |
 | No tray icon (GNOME) | Needs the AppIndicator extension (enabled by default on Ubuntu; on Fedora install *AppIndicator and KStatusNotifierItem Support*) |
@@ -181,14 +212,16 @@ Wayland is stricter than X11, which is the main reason a tool like this didn't e
 Debug logs: run `snapfloat` from a terminal. For drag & drop details: `QT_LOGGING_RULES="qt.qpa.xdnd.debug=true" snapfloat`.
 
 ## Uninstall
-- **Linux:** `./install.sh --uninstall`
-- **Windows:** quit from the tray, turn off *Start at login* first if you enabled it, then delete `SnapFloat.exe`.
+The easiest way on any system: **Settings → Uninstall…**. It removes the shortcuts, autostart entry, settings, GNOME extension and temporary screenshots, then quits. Screenshots you saved are not touched.
+
+- **Linux, from a terminal:** `snapfloat --uninstall` (or `./install.sh --uninstall` from the cloned folder)
+- **Windows:** after *Settings → Uninstall…* (or `SnapFloat.exe --uninstall`), delete `SnapFloat.exe`. This also removes its *Start at login* registry entry and its settings under `HKCU\Software\snapfloat`.
 
 ## Build from source
 ```sh
 git clone https://github.com/shaurya-8055/snapfloat && cd snapfloat
 python3 -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install --ignore-requires-python -r requirements.txt   # see the note in requirements.txt
 python snapfloat.py
 ```
 
@@ -234,10 +267,11 @@ Contributions are welcome: bug reports, fixes, and features from the roadmap.
 ## Roadmap
 - [x] Quick markup on click: arrow, box, highlighter, text, crop, **blur** for hiding private info
 - [x] Recent screenshots, delayed capture, flick to dismiss, smaller files, shutter sound and flash
-- [ ] Copy text from a screenshot (OCR)
+- [x] Copy text (OCR), one-click hide private info, numbered steps, beautify, combine, drag all
+- [x] One-key capture with `PrtSc`
 - [ ] AppImage / Flatpak / `.deb` packages
 - [ ] KDE Plasma: corner placement via a KWin script
-- [ ] Publish the GNOME extension on extensions.gnome.org
+- [ ] GNOME extension on extensions.gnome.org (submitted, in review: [SnapFloat](https://extensions.gnome.org/extension/11361/snapfloat/))
 
 ## License
 [MIT](LICENSE): free to use, modify and share.

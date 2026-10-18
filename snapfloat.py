@@ -5,11 +5,13 @@ Take a screenshot -> a thumbnail floats in the corner -> drag it into any chat.
 Nothing lands in your Screenshots folder unless you ask for it.
 Usage: snapfloat [--region | --screen | --settings | --quit]
 """
-import getpass, math, os, shlex, shutil, socket, subprocess, sys, tempfile, threading, time
+import getpass, math, os, re, shlex, shutil, socket, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 APP = "SnapFloat"
 COMMANDS = ("region", "screen", "settings", "quit")
+EXT_UUID = "snapfloat@shaurya-8055.github.io"
+LEGACY_UUID = "snapfloat@snapfloat.github.io"  # 1.0 used this ID; uninstall cleans it up too
 if os.name == "nt":
     SERVER = f"snapfloat-{getpass.getuser()}"
     ADDR = r"\\.\pipe" + "\\" + SERVER
@@ -34,8 +36,89 @@ def send(cmd):
         return False
 
 
+def gsettings_list(schema, key):
+    out = subprocess.run(["gsettings", "get", schema, key], capture_output=True, text=True).stdout
+    return [p.strip(" '") for p in out.replace("@as", "").strip(" []\n").split(",") if p.strip(" '")]
+
+
+GNOME_SHOT_KEYS = ("show-screenshot-ui", "screenshot")  # GNOME's PrtSc and Shift+PrtSc; Alt+PrtSc (window) stays GNOME's
+
+
+def free_print_key(on):
+    """Let SnapFloat have the Print Screen key, or hand it back to the system."""
+    if os.name == "nt":
+        import winreg  # Windows 11 sends PrtSc to Snipping Tool unless this is 0
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Keyboard") as k:
+            try:
+                cur = winreg.QueryValueEx(k, "PrintScreenKeyForSnippingEnabled")[0]
+            except OSError:
+                cur = None
+            if on and cur != 0:
+                winreg.SetValueEx(k, "PrintScreenKeyForSnippingEnabled", 0, winreg.REG_DWORD, 0)
+            elif not on and cur == 0:
+                winreg.SetValueEx(k, "PrintScreenKeyForSnippingEnabled", 0, winreg.REG_DWORD, 1)
+    elif shutil.which("gsettings") and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", ""):
+        for key in GNOME_SHOT_KEYS:
+            cur = gsettings_list("org.gnome.shell.keybindings", key)
+            if on and cur:
+                subprocess.run(["gsettings", "set", "org.gnome.shell.keybindings", key, "[]"], capture_output=True)
+            elif not on and not cur:  # ponytail: restores GNOME's default, not a custom binding the user had there
+                subprocess.run(["gsettings", "reset", "org.gnome.shell.keybindings", key], capture_output=True)
+
+
+def uninstall(quit_running=True):
+    """Undo everything SnapFloat and install.sh added: shortcuts, autostart, settings, temp shots, the install itself."""
+    if quit_running and send("quit"):
+        time.sleep(0.5)
+    home = Path.home()
+    free_print_key(False)
+    if os.name == "nt":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as k:
+                winreg.DeleteValue(k, APP)  # otherwise Windows keeps launching a deleted exe at every login
+        except OSError:
+            pass
+        for key in (r"Software\snapfloat\snapfloat", r"Software\snapfloat"):  # settings (QSettings' registry home)
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
+            except OSError:
+                pass
+    else:
+        if shutil.which("gsettings"):
+            keys = "org.gnome.settings-daemon.plugins.media-keys"
+            paths = gsettings_list(keys, "custom-keybindings")
+            for p in (p for p in paths if "/snapfloat-" in p):
+                subprocess.run(["gsettings", "reset-recursively", f"{keys}.custom-keybinding:{p}"], capture_output=True)
+            subprocess.run(["gsettings", "set", keys, "custom-keybindings", str([p for p in paths if "/snapfloat-" not in p])],
+                           capture_output=True)  # drop them from the list too, or GNOME shows blank shortcuts
+            exts = gsettings_list("org.gnome.shell", "enabled-extensions")
+            if EXT_UUID in exts or LEGACY_UUID in exts:
+                subprocess.run(["gsettings", "set", "org.gnome.shell", "enabled-extensions",
+                                str([e for e in exts if e not in (EXT_UUID, LEGACY_UUID)])], capture_output=True)
+        if shutil.which("gdbus"):
+            subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.impl.portal.PermissionStore",
+                            "--object-path", "/org/freedesktop/impl/portal/PermissionStore", "--method",
+                            "org.freedesktop.impl.portal.PermissionStore.DeletePermission", "screenshot", "screenshot", "snapfloat"],
+                           capture_output=True)
+        for f in (".config/autostart/snapfloat.desktop", ".local/bin/snapfloat", ".local/share/applications/snapfloat.desktop"):
+            (home / f).unlink(missing_ok=True)
+        for d in (".config/snapfloat", f".local/share/gnome-shell/extensions/{EXT_UUID}",
+                  f".local/share/gnome-shell/extensions/{LEGACY_UUID}", ".local/share/snapfloat"):
+            shutil.rmtree(home / d, ignore_errors=True)
+    shutil.rmtree(TMP, ignore_errors=True)
+
+
 ARG = None
 if __name__ == "__main__":
+    if "--uninstall" in sys.argv:
+        uninstall()
+        if os.name == "nt":  # the exe has no console to print to
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, "SnapFloat removed. Delete SnapFloat.exe to finish.", APP, 0)
+        else:
+            print("SnapFloat removed.")
+        sys.exit(0)
     ARG = next((a[2:] for a in sys.argv[1:] if a[2:] in COMMANDS), None)
     if send(ARG or "settings") or ARG == "quit":  # already running: just forward the command
         sys.exit(0)
@@ -44,25 +127,27 @@ WAYLAND = os.environ.get("XDG_SESSION_TYPE") == "wayland"
 if sys.platform.startswith("linux"):
     # native Wayland: XWayland can't drag into Wayland apps. Corner placement then needs the GNOME extension.
     os.environ.setdefault("QT_QPA_PLATFORM", "wayland" if WAYLAND else "xcb")
-EXT_UUID = "snapfloat@snapfloat.github.io"
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QLineF, QMimeData, QObject, QPoint, QPointF, QPropertyAnimation,
-                            QRect, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, QUrl, QVariantAnimation, Signal, Slot, SLOT)
+                            QProcess, QRect, QRectF, QSettings, QSize, QSizeF, Qt, QTimer, QUrl, QVariantAnimation, Signal, Slot, SLOT, qVersion)
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QDrag, QFont, QGuiApplication, QIcon, QImage, QKeySequence,
-                           QPainter, QPainterPath, QPen, QPixmap, QPolygonF)
+                           QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QLabel, QLineEdit, QMenu, QPushButton, QSlider, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSlider, QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
 
 DEFAULTS = dict(seconds=6, corner="bottom-right", size=220, copy=True, save=False,
                 folder=str(Path.home() / "Pictures" / "Screenshots"), region_key="Ctrl+Shift+4",
-                screen_key="Ctrl+Shift+3", watch_clipboard=False, autostart=False, small=False, sound=True, flash=True)
+                screen_key="Ctrl+Shift+3", print_key=True, watch_clipboard=False, autostart=True, small=False, sound=True, flash=True)
 CORNERS = ["bottom-right", "bottom-left", "top-right", "top-left"]
 MAX_THUMBS = 5
 MAX_RECENT = 10
 SMALL_MAX = 1920  # "smaller files": longest side of the JPG handed to chat apps
 M = 10  # shadow margin around a thumbnail
 ACCENT = QColor("#0a84ff")
+# Qt 6.10+ sends an empty drag image on Wayland (why requirements.txt pins 6.9). If a newer Qt ends up installed anyway,
+# don't empty the corner during a drag: nothing would follow the cursor and the screenshot would seem to vanish.
+DRAG_IMAGE_OK = not WAYLAND or tuple(int(x) for x in qVersion().split(".")[:2]) < (6, 10)
 
 
 class Config:
@@ -77,9 +162,16 @@ class Config:
         self.s.setValue(k, v)
 
 
+def tmp_dir():
+    """Screenshots can be private: on shared machines /tmp is visible to every user, so keep our folder owner-only."""
+    TMP.mkdir(mode=0o700, exist_ok=True)
+    if os.name != "nt":
+        TMP.chmod(0o700)  # also tightens a folder left by an older version
+    return TMP
+
+
 def new_path():
-    TMP.mkdir(exist_ok=True)
-    return TMP / time.strftime(f"Screenshot %Y-%m-%d at %H.%M.%S.{int(time.time() * 1000) % 1000:03d}.png")
+    return tmp_dir() / time.strftime(f"Screenshot %Y-%m-%d at %H.%M.%S.{int(time.time() * 1000) % 1000:03d}.png")
 
 
 def forget(path):
@@ -88,7 +180,7 @@ def forget(path):
 
 
 def purge():
-    for f in TMP.glob("*"):
+    for f in tmp_dir().glob("*"):
         f.unlink(missing_ok=True)
 
 
@@ -211,7 +303,7 @@ def shutter():
         import winsound
         wav = TMP / "shutter.wav"
         if not wav.exists():
-            TMP.mkdir(exist_ok=True)
+            tmp_dir()
             write_click(wav)
         winsound.PlaySound(str(wav), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
     elif shutil.which("canberra-gtk-play"):  # ponytail: X11 without libcanberra stays silent
@@ -299,7 +391,7 @@ class Countdown(QWidget):
 # ---------- markup ----------
 
 TOOLS = [("arrow", "Arrow", "A"), ("rect", "Box", "R"), ("highlight", "Highlighter", "H"), ("text", "Text", "T"),
-         ("blur", "Blur: hide private info", "B"), ("crop", "Crop", "C")]
+         ("step", "Numbered steps", "N"), ("blur", "Blur: hide private info", "B"), ("crop", "Crop", "C")]
 COLORS = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]
 TEXT_PX = 22  # on-screen text size while typing; stored in image pixels so it looks the same after export
 
@@ -341,9 +433,10 @@ def paint_shapes(p, img, shapes):
     """Markup in image pixels. Blurs go first: they sample the clean screenshot, and later marks stay crisp on top."""
     for s in shapes:
         if s["t"] == "blur":
-            r = s["r"].toRect().intersected(img.rect())
-            if r.width() > 1 and r.height() > 1:
-                p.drawImage(r.topLeft(), pixelate(img, r))
+            for rr in s.get("rs") or [s["r"]]:  # "Hide private info" stores all its boxes in one shape: one undo
+                r = rr.toRect().intersected(img.rect())
+                if r.width() > 1 and r.height() > 1:
+                    p.drawImage(r.topLeft(), pixelate(img, r))
     for s in shapes:
         t, c = s["t"], QColor(s["c"])
         if t == "rect":
@@ -359,12 +452,137 @@ def paint_shapes(p, img, shapes):
             p.drawPath(s["path"])
         elif t == "text":
             draw_text(p, s["at"], s["text"], c, s["size"])
+        elif t == "step":
+            rad = s["size"]
+            p.setPen(QPen(QColor(255, 255, 255, 235), rad * 0.14))
+            p.setBrush(c)
+            p.drawEllipse(s["at"], rad, rad)
+            f = QFont()
+            f.setPixelSize(max(1, round(rad * 1.1)))
+            f.setBold(True)
+            p.setFont(f)
+            p.setPen(QColor("black") if c.lightness() > 160 else QColor("white"))
+            p.drawText(QRectF(s["at"].x() - rad, s["at"].y() - rad, 2 * rad, 2 * rad), Qt.AlignCenter, str(s["n"]))
 
 
 def crop_rect(shapes, img):
     crops = [s["r"] for s in shapes if s["t"] == "crop"]
     r = crops[-1].intersected(QRectF(img.rect())) if crops else QRectF()
     return r if r.width() >= 2 and r.height() >= 2 else None
+
+
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+NUMBER = re.compile(r"\+?\d[\d \-().]{4,}\d")
+
+
+def is_private_number(m):
+    """Phones, cards, accounts, OTPs, but not an order number next to a year ("#4821 2026")."""
+    digits = re.sub(r"\D", "", m.group())
+    return m.group().startswith("+") or len(digits) >= 10 or re.search(r"\d{6}", m.group()) is not None
+OCR_HINT = "Install Tesseract OCR to enable this (Ubuntu: sudo apt install tesseract-ocr)"
+
+
+def run_ocr(parent, img, tsv, done):
+    """Tesseract in a QProcess so the UI never blocks. Calls done(output or None, scale)."""
+    exe = shutil.which("tesseract")
+    if not exe:
+        return done(None, 1)
+    scale = 2 if img.width() < 2000 else 1  # small UI text reads far better upscaled
+    if scale != 1:
+        img = img.scaled(img.width() * scale, img.height() * scale, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    path = tmp_dir() / f"ocr-{time.time_ns()}.png"
+    img.save(str(path))
+    proc = QProcess(parent)
+
+    def finished(*_):
+        path.unlink(missing_ok=True)
+        ok = proc.exitStatus() == QProcess.NormalExit and proc.exitCode() == 0
+        out = bytes(proc.readAllStandardOutput()).decode(errors="ignore") if ok else None
+        proc.deleteLater()
+        done(out, scale)
+    proc.finished.connect(finished)
+    proc.errorOccurred.connect(lambda err: finished() if err == QProcess.FailedToStart else None)
+    proc.start(exe, [str(path), "stdout"] + (["tsv"] if tsv else []))
+
+
+def private_boxes(tsv, scale):
+    """Emails and long numbers (phones, cards, OTPs) in Tesseract's word table, as image rects to blur."""
+    lines = {}
+    for row in tsv.splitlines()[1:]:
+        c = row.split("\t")
+        if len(c) == 12 and c[0] == "5" and c[11].strip():
+            lines.setdefault(tuple(c[1:5]), []).append((c[11], QRect(int(c[6]), int(c[7]), int(c[8]), int(c[9]))))
+    boxes = []
+    for words in lines.values():
+        text, spans = "", []
+        for w, box in words:
+            spans.append((len(text), len(text) + len(w), box))
+            text += w + " "
+        hits = list(EMAIL.finditer(text)) + [m for m in NUMBER.finditer(text) if is_private_number(m)]
+        for m in hits:
+            box = QRect()
+            for a, b, wb in spans:
+                if a < m.end() and b > m.start():
+                    box = box.united(wb)
+            boxes.append(QRectF(box.x() / scale, box.y() / scale, box.width() / scale, box.height() / scale).adjusted(-4, -4, 4, 4))
+    return boxes
+
+
+def ocr_message(text):
+    """Put recognised text on the clipboard; returns what to tell the user."""
+    if text is None:
+        return OCR_HINT if not shutil.which("tesseract") else "Couldn't read text from this screenshot"
+    text = text.strip()
+    if not text:
+        return "No text found in this screenshot"
+    QGuiApplication.clipboard().setText(text)
+    return f"Copied {len(text.splitlines())} line{'s' * (len(text.splitlines()) != 1)} of text"
+
+
+def flat(pix):
+    img = pix.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    img.setDevicePixelRatio(1)
+    return img
+
+
+def beautify(pix):
+    """Social-ready: padded gradient background, rounded corners, soft shadow."""
+    img = flat(pix)
+    w, h = img.width(), img.height()
+    pad = max(48, int(max(w, h) * 0.06))
+    rad = max(10, pad // 4)
+    out = QImage(w + 2 * pad, h + 2 * pad, QImage.Format_ARGB32_Premultiplied)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
+    g = QLinearGradient(0, 0, out.width(), out.height())
+    g.setColorAt(0, QColor("#7b5cff"))
+    g.setColorAt(1, QColor("#2fb4ff"))
+    p.fillRect(out.rect(), g)
+    r = QRectF(pad, pad, w, h)
+    p.setPen(Qt.NoPen)
+    for i in range(pad // 2, 0, -max(1, pad // 12)):
+        p.setBrush(QColor(0, 0, 0, 10))
+        p.drawRoundedRect(r.adjusted(-i, -i + pad / 8, i, i + pad / 8), rad + i, rad + i)
+    clip = QPainterPath()
+    clip.addRoundedRect(r, rad, rad)
+    p.setClipPath(clip)
+    p.drawImage(r, img)
+    p.end()
+    return QPixmap.fromImage(out)
+
+
+def combine(pixes, gap=16):
+    """Stack screenshots into one image (oldest on top): one picture to send instead of five."""
+    imgs = [flat(px) for px in pixes]
+    out = QImage(max(i.width() for i in imgs), sum(i.height() for i in imgs) + gap * (len(imgs) - 1), QImage.Format_RGB32)
+    out.fill(QColor("white"))
+    p = QPainter(out)
+    y = 0
+    for i in imgs:
+        p.drawImage((out.width() - i.width()) // 2, y, i)
+        y += i.height() + gap
+    p.end()
+    return QPixmap.fromImage(out)
 
 
 def tool_icon(name, fg):
@@ -400,6 +618,22 @@ def tool_icon(name, fg):
     elif name == "crop":
         p.drawPolyline(QPolygonF([QPointF(7, 2), QPointF(7, 15), QPointF(20, 15)]))
         p.drawPolyline(QPolygonF([QPointF(2, 7), QPointF(15, 7), QPointF(15, 20)]))
+    elif name == "step":
+        p.drawEllipse(QRectF(3, 3, 16, 16))
+        f = QFont()
+        f.setPixelSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(3, 3, 16, 16), Qt.AlignCenter, "1")
+    elif name == "private":  # an eye, crossed out
+        p.drawEllipse(QRectF(3, 7, 16, 8))
+        p.drawEllipse(QRectF(9, 9, 4, 4))
+        p.drawLine(QPointF(4, 18), QPointF(18, 4))
+    elif name == "copytext":
+        p.drawRoundedRect(QRectF(7, 3, 12, 14), 2, 2)
+        p.drawLine(QPointF(10, 7.5), QPointF(16, 7.5))
+        p.drawLine(QPointF(10, 11), QPointF(16, 11))
+        p.drawPolyline(QPolygonF([QPointF(4, 7), QPointF(4, 19), QPointF(14, 19)]))
     elif name in ("undo", "redo"):
         if name == "redo":
             p.translate(22, 0)
@@ -509,6 +743,8 @@ class Canvas(QWidget):
         tool, c, a = self.ed.tool, self.ed.color, self.to_img(e.position())
         if tool == "text":
             return self.start_text(e.position())
+        if tool == "step":
+            return self.push(dict(t="step", at=a, n=1 + sum(s["t"] == "step" for s in self.shapes), c=c, size=15 / self.k))
         w = (18 if tool == "highlight" else 4) / self.k  # widths are set in screen pixels: what you see is what you get
         self.cur = dict(t=tool, a=a, b=a, r=QRectF(a, a), c=c, w=w, path=QPainterPath(a))
 
@@ -620,6 +856,19 @@ class Editor(QDialog):
         redo.clicked.connect(lambda: self.canvas.redo())
         h.addWidget(undo)
         h.addWidget(redo)
+        h.addWidget(self.vsep())
+        ocr = bool(shutil.which("tesseract"))
+        private = self.tool_button("private", "Hide private info: blur emails, phone numbers, OTPs" if ocr else OCR_HINT, pal["fg"])
+        private.clicked.connect(self.hide_private)
+        copytext = self.tool_button("copytext", "Copy text from the screenshot" if ocr else OCR_HINT, pal["fg"])
+        copytext.clicked.connect(self.copy_text)
+        for b in (private, copytext):
+            b.setEnabled(ocr)
+            h.addWidget(b)
+        self.status = QLabel(objectName="hint")
+        self.status_timer = QTimer(self, singleShot=True, interval=4000, timeout=self.status.clear)
+        h.addSpacing(6)
+        h.addWidget(self.status)
         h.addStretch()
         h.addWidget(QPushButton("Cancel", clicked=self.reject, autoDefault=False, cursor=Qt.PointingHandCursor))
         h.addWidget(QPushButton("Done", objectName="primary", clicked=self.finish, autoDefault=False, cursor=Qt.PointingHandCursor))
@@ -671,6 +920,34 @@ class Editor(QDialog):
         else:
             super().keyPressEvent(e)  # Esc cancels
 
+    def say(self, text):
+        self.status.setText(text)
+        self.status_timer.start()
+
+    def hide_private(self):
+        self.canvas.commit_text()
+        self.setCursor(Qt.BusyCursor)
+        self.say("Looking for private info…")
+
+        def done(tsv, scale):
+            self.unsetCursor()
+            boxes = private_boxes(tsv, scale) if tsv else []
+            if boxes:
+                self.canvas.push(dict(t="blur", rs=boxes, r=boxes[0], c=self.color, w=1))
+                self.say(f"Blurred {len(boxes)} private item{'s' * (len(boxes) != 1)} · Ctrl+Z to undo")
+            else:
+                self.say("Nothing private found" if tsv is not None else "Couldn't read this screenshot")
+        run_ocr(self, self.canvas.img, True, done)
+
+    def copy_text(self):
+        self.setCursor(Qt.BusyCursor)
+        self.say("Reading text…")
+
+        def done(text, _scale):
+            self.unsetCursor()
+            self.say(ocr_message(text))
+        run_ocr(self, self.canvas.img, False, done)
+
     def finish(self):
         self.canvas.commit_text()
         if self.canvas.shapes:
@@ -689,7 +966,7 @@ class Thumb(QWidget):
         self.app, self.path, self.full, self.editor = app, path, pix, None
         self.press, self.hover, self.pinned, self.dragging, self.leaving = None, False, False, False, False
         self.swiping, self.swipe_from, self.lifted = False, None, False
-        self.setToolTip("Drag into any app · Click to mark up · Flick to the edge to dismiss · Right-click for more")
+        self.setToolTip("Drag into any app (Shift: all of them) · Click to mark up · Flick to the edge to dismiss · Right-click for more")
         self.build()
         self.v = self.hv = self.swipe = 0.0  # appear progress, hover progress, swipe offset in px
         self.appear = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=320,
@@ -829,22 +1106,26 @@ class Thumb(QWidget):
             self.swipe_anim.stop()
             return self.hold()
         hot, self.press = self.press, None
+        shift = QApplication.keyboardModifiers() & Qt.ShiftModifier
+        group = list(self.app.thumbs) if shift and len(self.app.thumbs) > 1 else [self]  # Shift: send every shot at once
         data = QMimeData()
-        data.setUrls([QUrl.fromLocalFile(str(self.drag_file()))])
+        data.setUrls([QUrl.fromLocalFile(str(t.drag_file())) for t in group])
         drag = QDrag(self)
         drag.setMimeData(data)
         drag.setPixmap(self.card)  # the whole thumbnail lifts off and follows the cursor, held where it was grabbed
         drag.setHotSpot(hot)
-        self.dragging = self.lifted = True  # no timeout mid-drag: closing would delete us under drag.exec()
-        self.hold()
+        for t in group:  # no timeout mid-drag: closing would delete us under drag.exec()
+            t.dragging, t.lifted = True, DRAG_IMAGE_OK
+            t.hold()
         dropped = drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.CopyAction) != Qt.IgnoreAction
-        self.dragging = False
-        if dropped:
-            self.dismiss()  # dropped somewhere: job done, file never touches Screenshots
-        else:
-            self.lifted, self.v = False, 0.0  # nowhere to drop: slide back into the corner
-            self.appear.start()
-            self.restart()
+        for t in group:
+            t.dragging = False
+            if dropped:
+                t.dismiss()  # dropped somewhere: job done, files never touch Screenshots
+            else:
+                t.lifted, t.v = False, 0.0  # nowhere to drop: slide back into the corner
+                t.appear.start()
+                t.restart()
 
     def mouseReleaseEvent(self, e):
         if self.swiping:
@@ -868,6 +1149,10 @@ class Thumb(QWidget):
         m = QMenu(self)
         m.addAction("Mark up…", self.markup)
         m.addAction("Copy", lambda: self.app.copy(self.full))
+        m.addAction("Copy text", self.copy_text).setEnabled(bool(shutil.which("tesseract")))
+        m.addAction("Beautify", lambda: self.set_image(beautify(self.full)))
+        if len(self.app.thumbs) > 1:
+            m.addAction(f"Combine all {len(self.app.thumbs)} into one", self.app.combine_all)
         m.addAction("Open in viewer", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path))))
         m.addAction(f"Save to {Path(self.app.cfg.folder).name}", self.save)
         m.addAction("Save As…", self.save_as)
@@ -876,6 +1161,9 @@ class Thumb(QWidget):
         m.addAction("Close", self.dismiss)
         m.exec(e.globalPos())
         self.restart()
+
+    def copy_text(self):
+        run_ocr(self.app, self.full.toImage(), False, lambda text, _scale: self.app.tray.showMessage(APP, ocr_message(text)))
 
     def drag_file(self):
         if not self.app.cfg.small:
@@ -1019,23 +1307,31 @@ def gnome_bind(keys):
         return False
     schema = "org.gnome.settings-daemon.plugins.media-keys"
     base = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/"
-    out = subprocess.run(["gsettings", "get", schema, "custom-keybindings"], capture_output=True, text=True).stdout
-    paths = [p.strip(" '") for p in out.replace("@as", "").strip(" []\n").split(",") if p.strip(" '")]
+    old = gsettings_list(schema, "custom-keybindings")
+    ours, seen = [], {}
     for cmd, seq in keys:
-        path = f"{base}snapfloat-{cmd}/"
-        if path not in paths:
-            paths.append(path)
+        seen[cmd] = seen.get(cmd, 0) + 1
+        path = f"{base}snapfloat-{cmd}{'' if seen[cmd] == 1 else seen[cmd]}/"  # snapfloat-region, snapfloat-region2, ...
+        ours.append(path)
         rel = f"{schema}.custom-keybinding:{path}"
         for k, v in (("name", f"{APP} {cmd}"), ("command", shlex.join(CMD + [f"--{cmd}"])), ("binding", gnome_accel(seq))):
             subprocess.run(["gsettings", "set", rel, k, v])
-    subprocess.run(["gsettings", "set", schema, "custom-keybindings", str(paths)])
+    for path in (p for p in old if "/snapfloat-" in p and p not in ours):  # e.g. PrtSc just turned off
+        subprocess.run(["gsettings", "reset-recursively", f"{schema}.custom-keybinding:{path}"])
+    subprocess.run(["gsettings", "set", schema, "custom-keybindings", str([p for p in old if "/snapfloat-" not in p] + ours)])
     return True
 
 
-def gnome_ext_active():
-    if not shutil.which("gnome-extensions"):
-        return True  # ponytail: not GNOME, nothing to nag about; KDE etc. get default window placement
-    return "ACTIVE" in subprocess.run(["gnome-extensions", "info", EXT_UUID], capture_output=True, text=True).stdout
+def gnome_ext_problem():
+    """None when the GNOME extension is placing thumbnails, else a sentence saying what to do."""
+    if not WAYLAND or not shutil.which("gnome-extensions"):
+        return None  # ponytail: not GNOME Wayland, nothing to nag about; KDE etc. get default window placement
+    info = subprocess.run(["gnome-extensions", "info", EXT_UUID], capture_output=True, text=True).stdout
+    if "ACTIVE" in info:
+        return None
+    if "OUT OF DATE" in info:
+        return "Your GNOME is newer than the SnapFloat extension supports, so thumbnails open in the middle. Update SnapFloat."
+    return "Thumbnails open in the middle until the SnapFloat GNOME extension is active. Log out and back in once after installing."
 
 
 def set_autostart(on):
@@ -1193,7 +1489,7 @@ class Settings(QDialog):
         self.corner = CornerPicker(c.corner)
         self.copy_t, self.save_t, self.small_t = toggle(c.copy), toggle(c.save), toggle(c.small)
         self.autostart_t, self.watch_t = toggle(c.autostart), toggle(c.watch_clipboard)
-        self.sound_t, self.flash_t = toggle(c.sound), toggle(c.flash)
+        self.sound_t, self.flash_t, self.print_t = toggle(c.sound), toggle(c.flash), toggle(c.print_key)
         self.folder = QLineEdit(c.folder, toolTip=c.folder)
         folder_row = QWidget(minimumWidth=270)
         fl = QHBoxLayout(folder_row)
@@ -1216,9 +1512,9 @@ class Settings(QDialog):
         header.addSpacing(6)
         header.addLayout(titles, 1)
         root.addLayout(header)
-        if WAYLAND and not gnome_ext_active():
-            root.addWidget(QLabel("⚠  Thumbnails open in the middle until the SnapFloat GNOME extension is active. "
-                                  "<b>Log out and back in once</b> after installing.", objectName="warn", wordWrap=True))
+        problem = gnome_ext_problem()
+        if problem:
+            root.addWidget(QLabel(f"⚠  {problem}", objectName="warn", wordWrap=True))
 
         root.addWidget(self.card("Thumbnail", [
             ("Show for", "Hovering pauses it", self.seconds),
@@ -1229,14 +1525,17 @@ class Settings(QDialog):
             ("Send smaller files", f"Drag as JPG, max {SMALL_MAX} px: faster uploads", self.small_t),
             ("Save when it disappears", "Off: it's deleted, nothing piles up", self.save_t),
             ("Save folder", None, folder_row)]))
-        where = "Added to GNOME keyboard shortcuts" if sys.platform.startswith("linux") else "Work in every app"
+        system = "GNOME's" if sys.platform.startswith("linux") else "Snipping Tool's"
         root.addWidget(self.card("Shortcuts", [
-            ("Capture region", where, self.region_key),
-            ("Capture screen", "Backspace clears", self.screen_key)]))
-        general = [("Start at login", None, self.autostart_t)]
+            ("Print Screen key", f"PrtSc: region · Shift+PrtSc: whole screen (instead of {system})", self.print_t),
+            ("Capture region", "Also works, any time", self.region_key),
+            ("Capture screen", "Click a field and press keys · Backspace clears", self.screen_key)]))
+        general = [("Start at login", "Otherwise the first shortcut has to start it (slower)", self.autostart_t)]
         if not WAYLAND:  # on Wayland GNOME's screenshot service already flashes and plays its sound
             general += [("Shutter sound", None, self.sound_t), ("Screen flash", None, self.flash_t),
                         ("Also catch copied images", "Win+Shift+S, PrtSc", self.watch_t)]
+        general.append(("Uninstall", "Removes shortcuts, autostart, settings and temp files",
+                        QPushButton("Uninstall…", clicked=self.uninstall, cursor=Qt.PointingHandCursor)))
         root.addWidget(self.card("General", general))
 
         buttons = QHBoxLayout()
@@ -1289,6 +1588,15 @@ class Settings(QDialog):
         v.addWidget(frame)
         return box
 
+    def uninstall(self):
+        if QMessageBox.question(self, f"Uninstall {APP}", "Remove SnapFloat's shortcuts, autostart, settings and temporary "
+                                "screenshots? Screenshots you saved stay where they are.") != QMessageBox.Yes:
+            return
+        uninstall(quit_running=False)  # we are the running instance
+        QMessageBox.information(self, APP, "SnapFloat removed. Delete SnapFloat.exe to finish." if os.name == "nt" else
+                                "SnapFloat removed.")
+        self.app.quit()
+
     def browse(self):
         d = QFileDialog.getExistingDirectory(self, "Save folder", self.folder.text())
         if d:
@@ -1299,7 +1607,8 @@ class Settings(QDialog):
                       copy=self.copy_t.isChecked(), save=self.save_t.isChecked(), small=self.small_t.isChecked(),
                       folder=self.folder.text().strip() or DEFAULTS["folder"], region_key=self.region_key.text(),
                       screen_key=self.screen_key.text(), autostart=self.autostart_t.isChecked(),
-                      watch_clipboard=self.watch_t.isChecked(), sound=self.sound_t.isChecked(), flash=self.flash_t.isChecked())
+                      watch_clipboard=self.watch_t.isChecked(), sound=self.sound_t.isChecked(), flash=self.flash_t.isChecked(),
+                      print_key=self.print_t.isChecked())
         for k, v in values.items():
             self.app.cfg.set(k, v)
         self.app.apply()
@@ -1340,14 +1649,15 @@ class App(QApplication):
         self.tray.setContextMenu(self.menu)
         self.tray.show()
         self.apply()
-        if WAYLAND and not gnome_ext_active():
-            self.tray.showMessage(APP, "Log out and back in once so the SnapFloat GNOME extension can put thumbnails in the corner.")
+        problem = gnome_ext_problem()
+        if problem:
+            self.tray.showMessage(APP, problem)
 
     def apply(self):
         c = self.cfg
         self.menu.clear()
-        self.menu.addAction(f"Capture region\t{c.region_key}", self.region)
-        self.menu.addAction(f"Capture screen\t{c.screen_key}", self.screen)
+        self.menu.addAction(f"Capture region\t{'PrtSc' if c.print_key else c.region_key}", self.region)
+        self.menu.addAction(f"Capture screen\t{'Shift+PrtSc' if c.print_key else c.screen_key}", self.screen)
         later = self.menu.addMenu("Capture after…")
         for n in (3, 5, 10):
             later.addAction(f"{n} seconds", lambda n=n: self.delayed(n))
@@ -1357,6 +1667,9 @@ class App(QApplication):
         self.menu.addAction("Settings…", self.settings)
         self.menu.addAction("Quit", self.quit)
         keys = [("region", c.region_key), ("screen", c.screen_key)]
+        if c.print_key:
+            keys += [("region", "Print"), ("screen", "Shift+Print")]
+        free_print_key(c.print_key)
         if os.name == "nt":
             if self.hotkeys:
                 self.hotkeys.stop()
@@ -1452,6 +1765,12 @@ class App(QApplication):
             return self.tray.showMessage(APP, "That screenshot is no longer available.")
         if all(t.path != path for t in self.thumbs):
             self.show_shot(QPixmap(str(path)), path, copy=False)
+
+    def combine_all(self):
+        pix = combine([t.full for t in self.thumbs])
+        for t in list(self.thumbs):
+            t.dismiss()
+        self.show_shot(pix)
 
     def clear_recent(self):
         shown = {t.path for t in self.thumbs}
