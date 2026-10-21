@@ -1,7 +1,7 @@
 [project]
 name = "snapfloat"
 version = "1.2.0"
-description = "macOS-style floating screenshot thumbnail for Linux and Windows"
+description = "Floating screenshots you drag into any app, with markup, OCR, scrolling capture and screen recording. Nothing piles up."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Shaurya Shakya" }]
