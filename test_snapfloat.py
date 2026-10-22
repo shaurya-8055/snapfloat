@@ -258,6 +258,20 @@ assert not mc.shapes and [s["on"] for s in mc.proposals] == [True, False]
 assert mc.apply_proposals() == 1 and mc.shapes[0]["rs"] == [QRectF(0, 0, 40, 40)] and not mc.proposals
 mk.close()
 
+# Read QR code: decodes, copies, and says so; a plain shot just says nothing was found
+if sf.zxingcpp:
+    code = bytes(sf.zxingcpp.create_barcode("https://example.com/qr", sf.zxingcpp.BarcodeFormat.QRCode).to_image(scale=6))
+    side = int(len(code) ** 0.5)
+    qr = QImage(code, side, side, side, QImage.Format_Grayscale8).copy()
+    canvas = QImage(800, 500, QImage.Format_RGB32)
+    canvas.fill(QColor("white"))
+    from PySide6.QtGui import QPainter
+    qp = QPainter(canvas)
+    qp.drawImage(300, 120, qr)
+    qp.end()
+    assert sf.read_qr(canvas) == "Copied: https://example.com/qr" and app.clipboard().text() == "https://example.com/qr"
+    assert sf.read_qr(img) == "No QR code or barcode found"
+
 # a 6th screenshot never closes one that's being edited or is pinned
 for t in list(app.thumbs):
     t.dismiss()
@@ -327,6 +341,10 @@ sel.close()
 # private temp folder, start-at-login default
 assert (sf.TMP.stat().st_mode & 0o777) == 0o700, oct(sf.TMP.stat().st_mode)
 assert app.cfg.autostart is True and (sf.Path.home() / ".config/autostart/snapfloat.desktop").exists()
+
+# --self-test checks a build end to end and exits non-zero on any failure
+r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)
+assert r.returncode == 0 and "self-test: passed" in r.stdout, r.stdout + r.stderr
 
 # uninstall removes everything install.sh and the app created (GNOME calls disabled: never touch the real desktop)
 home = sf.Path.home()
