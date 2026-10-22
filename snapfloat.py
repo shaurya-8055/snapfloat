@@ -324,14 +324,40 @@ if WAYLAND:
     from PySide6.QtDBus import QDBusConnection, QDBusMessage
 
 
-class Selector(QWidget):
-    """Windows/X11: frozen screen, drag a rectangle. One per monitor; selection stays on one monitor."""
+def windows_under_desktop():
+    """Windows: the visible top-level windows, topmost first, as rects in physical desktop pixels (empty elsewhere).
+    Read before the selection overlay covers them."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+    user32, dwm, rects = ctypes.windll.user32, ctypes.windll.dwmapi, []
 
-    def __init__(self, screen, finish):
+    def visit(hwnd, _):
+        cloaked, r = ctypes.c_int(0), wintypes.RECT()
+        if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+            dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))  # DWMWA_CLOAKED: other desktops, hidden UWP
+            # DWMWA_EXTENDED_FRAME_BOUNDS: the visible frame, without the invisible resize borders
+            if not cloaked.value and not dwm.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(r), ctypes.sizeof(r)) \
+                    and r.right - r.left > 40 and r.bottom - r.top > 40:
+                rects.append(QRect(r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return True
+    user32.EnumWindows(ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit), 0)  # top of the z-order first
+    return rects
+
+
+class Selector(QWidget):
+    """Windows/X11: frozen screen, drag a rectangle, or (Windows) click a window. One per monitor; selection stays on one monitor."""
+
+    def __init__(self, screen, finish, windows=()):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.shot, self.finish, self.origin, self.sel = screen.grabWindow(0), finish, None, QRect()
+        self.shot, self.finish, self.origin, self.sel, self.hover = screen.grabWindow(0), finish, None, QRect(), None
+        # Qt 6 keeps each screen's native origin at its geometry's top-left, so desktop pixels minus that origin are pixels
+        # of this screen's shot. ponytail: untested on real Windows, mixed-DPI setups especially
+        self.windows = [r.translated(-screen.geometry().topLeft()).intersected(self.shot.rect()) for r in windows]
         self.setGeometry(screen.geometry())
         self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(bool(windows))  # highlight the window under the pointer
 
     def src(self, r):
         d = self.shot.devicePixelRatio()
@@ -341,25 +367,35 @@ class Selector(QWidget):
         p = QPainter(self)
         p.drawPixmap(QRectF(self.rect()), self.shot, QRectF(self.shot.rect()))
         p.fillRect(self.rect(), QColor(0, 0, 0, 110))
-        if not self.sel.isEmpty():
-            p.drawPixmap(QRectF(self.sel), self.shot, self.src(self.sel))
+        d, h = self.shot.devicePixelRatio(), self.hover
+        r = QRectF(self.sel) if not self.sel.isEmpty() else QRectF(h.x() / d, h.y() / d, h.width() / d, h.height() / d) if h else None
+        if r is not None:
+            p.drawPixmap(r, self.shot, self.src(r))
             p.setPen(QPen(ACCENT, 2))
-            p.drawRect(self.sel)
+            p.drawRect(r)
+
+    def window_at(self, pos):
+        d = self.shot.devicePixelRatio()
+        return next((w for w in self.windows if w.contains((pos * d).toPoint())), None)
 
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return self.finish(None)
-        self.origin = e.position().toPoint()
+        self.origin, self.hover = e.position().toPoint(), self.window_at(e.position())
 
     def mouseMoveEvent(self, e):
         if self.origin is not None:
             self.sel = QRect(self.origin, e.position().toPoint()).normalized()
-            self.update()
+        else:
+            self.hover = self.window_at(e.position())
+        self.update()
 
     def mouseReleaseEvent(self, e):
         if self.origin is not None:
-            ok = self.sel.width() > 3 and self.sel.height() > 3
-            self.finish(self.shot.copy(self.src(self.sel).toRect()) if ok else None)
+            if self.sel.width() > 3 and self.sel.height() > 3:
+                self.finish(self.shot.copy(self.src(self.sel).toRect()))
+            else:  # a click: the window under it, if any
+                self.finish(self.shot.copy(self.hover) if self.hover else None)
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
@@ -375,7 +411,8 @@ def select_region(callback):
         sels.clear()
         callback(pix)  # None = cancelled; still brings hidden thumbnails back
 
-    sels += [Selector(s, finish) for s in QGuiApplication.screens()]  # grab every screen before covering any
+    windows = windows_under_desktop()
+    sels += [Selector(s, finish, windows) for s in QGuiApplication.screens()]  # grab every screen before covering any
     for s in sels:
         s.showFullScreen()
         s.activateWindow()

@@ -365,6 +365,29 @@ pin.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
 app.sendPostedEvents(None, QEvent.DeferredDelete)
 assert not app.pins, "closing frees it"
 
+# region selector (Windows/X11): a click captures the window under it (Windows), a drag still captures the region
+scr = app.primaryScreen()
+got = []
+origin = scr.geometry().topLeft()
+sel = sf.Selector(scr, got.append, [sf.QRect(origin.x() + 50, origin.y() + 40, 300, 200), sf.QRect(origin, scr.geometry().size())])
+sel.resize(scr.geometry().size())
+d = sel.shot.devicePixelRatio()
+ev = lambda kind, x, y: getattr(sel, kind)(QMouseEvent(
+    {"mousePressEvent": QEvent.MouseButtonPress, "mouseMoveEvent": QEvent.MouseMove,
+     "mouseReleaseEvent": QEvent.MouseButtonRelease}[kind], QPointF(x, y), QPointF(x, y), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+ev("mouseMoveEvent", 100 / d, 100 / d)
+assert sel.hover == sf.QRect(50, 40, 300, 200), "topmost window under the pointer is highlighted"
+ev("mousePressEvent", 100 / d, 100 / d)
+ev("mouseReleaseEvent", 100 / d, 100 / d)
+assert got[-1].size().toTuple() == (300, 200), "a click captures that window"
+sel.origin, sel.sel = None, sf.QRect()
+ev("mousePressEvent", 10, 10)
+ev("mouseMoveEvent", 60, 50)
+ev("mouseReleaseEvent", 60, 50)
+assert abs(got[-1].width() - 50 * d) <= d and abs(got[-1].height() - 40 * d) <= d, "a drag still captures the region"
+sel.close()
+assert sf.windows_under_desktop() == [] or os.name == "nt"
+
 # --self-test checks a build end to end and exits non-zero on any failure
 r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)
 assert r.returncode == 0 and "self-test: passed" in r.stdout, r.stdout + r.stderr
