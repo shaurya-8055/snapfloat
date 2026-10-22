@@ -1,44 +1,99 @@
 """Scrolling capture: grab an area while it scrolls and stitch the frames into one image."""
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from .common import QSS, themed, WAYLAND
 
 
-def row_sigs(img):
-    """One hash per pixel row. Screenshots of scrolled content repeat rows exactly, so equal hashes = the same row."""
-    bpl, data = img.bytesPerLine(), bytes(img.constBits())
-    return [hash(data[y * bpl:(y + 1) * bpl]) for y in range(img.height())]
+SIG_W = 192  # frames are compared shrunk to this width: fast, blind to sub-pixel differences, yet words still differ
+
+
+def signature(img):
+    """A frame reduced to what the matching looks at. Exact pixels can't be compared: on a fractionally scaled screen
+    (167%, 125%...) scrolled text is redrawn at sub-pixel positions, so no row ever repeats exactly."""
+    return img.scaled(SIG_W, img.height(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB32)
+
+
+class Content:
+    """Which rows of a signature have content. Blank rows look the same at any scroll position, so they must not count
+    when scoring one: they would make a wrong position look as good as the right one."""
+
+    def __init__(self, sig):
+        g = sig.convertToFormat(QImage.Format_Grayscale8)
+        bpl, data, w = g.bytesPerLine(), bytes(g.constBits()), g.width()
+        rows = [data[y * bpl:y * bpl + w] for y in range(g.height())]
+        on = [max(r) - min(r) > 24 for r in rows]
+        self.mask = QImage(b"".join((b"\xff" if o else b"\x00") * 4 * w for o in on), w, len(on), 4 * w,
+                           QImage.Format_RGB32).copy()  # white: content, black: blank
+        self.before = [0]  # how many content rows come before each row
+        for o in on:
+            self.before.append(self.before[-1] + o)
+
+    def count(self, y, n):
+        return self.before[y + n] - self.before[y]
+
+
+def mean_diff(a, b, ay, by, n, content=None):
+    """Average difference (0-255) between n rows of signature a from row ay and of b from row by; with `content` (b's),
+    over b's content rows only (None if there are too few to judge). The pixel work is a Qt "difference" paint, a
+    multiply by the mask and a smooth shrink, so it runs in C, not Python."""
+    rows = content.count(by, n) if content else n
+    if content and rows < 3:
+        return None
+    d = a.copy(0, ay, SIG_W, n)
+    p = QPainter(d)
+    p.setCompositionMode(QPainter.CompositionMode_Difference)
+    p.drawImage(0, 0, b, 0, by, SIG_W, n)
+    if content:
+        p.setCompositionMode(QPainter.CompositionMode_Multiply)
+        p.drawImage(0, 0, content.mask, 0, by, SIG_W, n)
+    p.end()
+    small = d.scaled(4, 16, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    return sum(small.pixelColor(x, y).value() for x in range(4) for y in range(16)) / 64 * n / rows
 
 
 def scroll_offset(prev, cur):
-    """How many rows the content moved up from frame `prev` to `cur` (row hashes), and how many rows at the bottom stayed
-    put (a fixed footer, or blank space). None: it didn't move, moved up, or the frames don't overlap.
-    Rows that stay put at the top or bottom (sticky headers, footers) don't take part in the matching."""
-    n = len(cur)
-    head = next((y for y in range(n) if prev[y] != cur[y]), n)
+    """How far the content moved up from signature `prev` to `cur`, and how many rows at the bottom stayed put (a fixed
+    footer, or blank space): (rows, footer), or a reason it can't be used: "still" (it didn't move) or "lost" (moved
+    up, too far, or nothing to match on). Rows that stay put at the top or bottom (sticky header, footer) are left out."""
+    n = cur.height()
+    same = [mean_diff(prev, cur, y, y, 1) < 3 for y in range(n)]
+    head = next((y for y in range(n) if not same[y]), n)
     if head == n:
-        return None
-    foot = next(i for i in range(n) if prev[n - 1 - i] != cur[n - 1 - i])
+        return "still"
+    foot = next(i for i in range(n) if not same[n - 1 - i])
     lo, hi = head, n - foot
-    where = {}
-    for y in range(lo, hi):
-        where.setdefault(prev[y], []).append(y)
-    votes = {}
-    for y in range(lo, hi):
-        ys = where.get(cur[y], ())
-        if len(ys) <= 4:  # blank and repeated rows match anywhere: they don't get a vote
-            for py in ys:
-                if py > y:
-                    votes[py - y] = votes.get(py - y, 0) + 1
-    if not votes:
-        return None
-    d = max(votes, key=votes.get)  # ponytail: one best shift; a page of identical rows could fool it
-    overlap = hi - lo - d
-    if overlap < 8 or sum(cur[y] == prev[y + d] for y in range(lo, lo + overlap)) < 0.8 * overlap:
-        return None
+    band = hi - lo
+    least = max(12, band // 20)  # the frames must overlap by at least this much
+    if band < 2 * least:
+        return "lost"
+    # coarse search on quarter-height signatures, then refine around the best at full height
+    q = 4
+    pc, cc = (s.scaled(SIG_W, max(1, n // q), Qt.IgnoreAspectRatio, Qt.SmoothTransformation) for s in (prev, cur))
+    lc, hc, ccon = lo // q, hi // q, Content(cc)
+    costs = {d: c for d in range(1, hc - lc - least // q) if (c := mean_diff(pc, cc, lc + d, lc, hc - lc - d, ccon)) is not None}
+    if not costs:
+        return "lost"
+    coarse = min(costs, key=costs.get)
+    rival = min((d for d in costs if abs(d - coarse) > 3), key=costs.get, default=None)
+    con = Content(cur)
+
+    def refine(c):  # the best full-height shift near a quarter-height one: (shift, cost)
+        fine = {d: x for d in range(max(1, c * q - 2 * q), min(band - least, c * q + 2 * q) + 1)
+                if (x := mean_diff(prev, cur, lo + d, lo, band - d, con)) is not None}
+        d = min(fine, key=fine.get, default=None)
+        return (d, fine[d]) if d is not None else (None, 255)
+
+    d, best = refine(coarse)
+    still = mean_diff(prev, cur, lo, lo, band, con)
+    if d is None or still is None or best > 6 or best > 0.6 * still:
+        return "lost"
+    # Lines of text look alike, so a wrong shift by whole lines can match almost as well: the best must stand out from
+    # the best clearly different shift, or the frame is skipped (better than joined in the wrong place)
+    if rival is not None and refine(rival)[1] < 1.5 * best + 1:
+        return "lost"
     return d, foot
 
 
@@ -48,22 +103,22 @@ class Stitcher:
 
     def __init__(self, first):
         self.first = first.convertToFormat(QImage.Format_RGB32)
-        self.sigs, self.parts, self.foot = row_sigs(self.first), [], self.first.height()
+        self.sig, self.parts, self.foot = signature(self.first), [], self.first.height()
 
     def add(self, img):
-        """Returns whether the frame added anything (False: not scrolled, scrolled up, or too far to match)."""
+        """Adds a frame. Returns "added", or why not: "still" (not scrolled), "lost" (scrolled up, too far, or no match)."""
         img = img.convertToFormat(QImage.Format_RGB32)
         if img.size() != self.first.size():
-            return False
-        sigs = row_sigs(img)
-        moved = scroll_offset(self.sigs, sigs)
-        if not moved:
-            return False
+            return "lost"
+        sig = signature(img)
+        moved = scroll_offset(self.sig, sig)
+        if isinstance(moved, str):
+            return moved
         d, foot = moved
         self.parts.append((d, img.copy(0, img.height() - foot - d, img.width(), foot + d)))
         self.foot = min(self.foot, foot)  # the real footer is what stayed put at every step
-        self.sigs = sigs
-        return True
+        self.sig = sig
+        return "added"
 
     def height(self):
         return self.first.height() + sum(d for d, _ in self.parts)
@@ -97,6 +152,7 @@ class ScrollCapture(QWidget):
     # Stop at 25 megapixels (100 MB; about 4 screens tall at 3456 px wide): an endless feed would grow forever, and a
     # row cap alone let a full-width capture on a 2x screen reach ~0.9 GB with the strips it's built from.
     MAX_PIXELS = 25_000_000
+    LONGEST = "Scroll back up a little: each step must be less than the area's height"
 
     def __init__(self, app, first, grab, area=None):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -108,14 +164,23 @@ class ScrollCapture(QWidget):
         QHBoxLayout(self).addWidget(card)
         self.layout().setContentsMargins(0, 0, 0, 0)
         h = QHBoxLayout(card)
-        h.setContentsMargins(14, 8, 8, 8)
-        self.label = QLabel()
-        h.addWidget(self.label)
+        h.setContentsMargins(16, 10, 10, 10)
+        h.setSpacing(8)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        self.label = QLabel(objectName="title")  # what just happened
+        self.hint = QLabel(objectName="hint")  # what to do next
+        text.addWidget(self.label)
+        text.addWidget(self.hint)
+        self.hint.ensurePolished()  # its font comes from the stylesheet; sized for the longest hint, the buttons don't jump
+        self.hint.setMinimumWidth(self.hint.fontMetrics().horizontalAdvance(self.LONGEST) + 4)
+        h.addLayout(text)
+        h.addSpacing(10)
         if WAYLAND:
-            h.addWidget(QPushButton("Add", clicked=self.tick, cursor=Qt.PointingHandCursor))
-        h.addWidget(QPushButton("Done", objectName="primary", clicked=self.done, cursor=Qt.PointingHandCursor))
+            h.addWidget(QPushButton("Add", objectName="primary", clicked=self.tick, cursor=Qt.PointingHandCursor))
+        h.addWidget(QPushButton("Done", objectName="" if WAYLAND else "primary", clicked=self.done, cursor=Qt.PointingHandCursor))
         h.addWidget(QPushButton("Cancel", clicked=lambda: self.finish(None), cursor=Qt.PointingHandCursor))
-        self.count()
+        self.say("start")
         self.adjustSize()
         self.hide_to_grab = WAYLAND  # Wayland: we can't place this bar, so it might sit over the area
         if area is not None:  # Windows/X11: just below (or above) the area, where the grabs don't see it
@@ -129,9 +194,22 @@ class ScrollCapture(QWidget):
         if not WAYLAND:
             self.timer.start()
 
-    def count(self):
+    def say(self, what):
+        """Show what the last grab did, and what to do next."""
         n = len(self.stitcher.parts) + 1
-        self.label.setText(f"{'Scroll, then Add' if WAYLAND else 'Scroll slowly'} · {n} part{'s' * (n != 1)}")
+        parts = f"{n} part{'s' * (n != 1)}"
+        title, hint = {
+            "start": (f"Scrolling capture · {parts}", "Scroll down a little, then press Add" if WAYLAND else
+                      "Scroll down slowly. Press Done at the end"),
+            "added": (f"✓ Added · {parts}", "Scroll a little more, then Add. Done when you reach the end" if WAYLAND else
+                      "Keep scrolling slowly. Press Done at the end"),
+            "still": (f"Nothing moved · {parts}", "Scroll down a little first, then press Add"),
+            "lost": (f"Couldn't join that part · {parts}", self.LONGEST),
+            "failed": (f"Couldn't take a screenshot · {parts}", "Try Add again"),
+        }[what]
+        self.label.setText(title)
+        self.hint.setText(hint)
+        self.adjustSize()
 
     def tick(self):
         if self.busy:  # the last grab is still on its way (Wayland)
@@ -147,8 +225,9 @@ class ScrollCapture(QWidget):
         self.busy = False
         if not isValid(self) or not self.timer:  # finished meanwhile
             return
-        if img is not None and self.stitcher.add(img):
-            self.count()
+        what = self.stitcher.add(img) if img is not None else "failed"
+        if WAYLAND or what != "still":  # grabbing on its own (Windows/X11), "nothing moved" is just between scrolls
+            self.say(what)
         if self.hide_to_grab:
             self.show()
         if self.stitcher.height() * self.stitcher.first.width() >= self.MAX_PIXELS:

@@ -111,6 +111,7 @@ QSS = """
 QDialog { background: @bg; }
 QLabel { color: @fg; font-size: 13px; }
 QLabel#h1 { font-size: 20px; font-weight: 600; }
+QLabel#title { font-size: 14px; font-weight: 600; }
 QLabel#sub, QLabel#hint { color: @muted; font-size: 12px; }
 QLabel#section { color: @muted; font-size: 11px; font-weight: 600; padding-left: 4px; }
 QFrame#card { background: @card; border: 1px solid @border; border-radius: 12px; }

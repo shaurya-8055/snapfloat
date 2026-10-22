@@ -197,7 +197,8 @@ class App(QApplication):
                 mine = full.copy(QRect(origin, QSize(round(g.width() * k), round(g.height() * k))))
             shot = QPixmap.fromImage(mine)
             shot.setDevicePixelRatio(mine.width() / scr.geometry().width())
-            self.picker = Selector(scr, lambda pix: picked(pix, origin, full.size()), shot=shot)
+            self.picker = Selector(scr, lambda pix: picked(pix, origin, full.size()), shot=shot,
+                                   hint="Drag over the part of the screen that scrolls  ·  Esc cancels")
             self.picker.showFullScreen()
             self.picker.activateWindow()
 
