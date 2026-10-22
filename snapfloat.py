@@ -2557,14 +2557,19 @@ def self_test(report):
             path.unlink()
 
     def programs():
-        names = ("tesseract",) if os.name == "nt" else ("gsettings", "gnome-extensions", "wl-copy", "tesseract")
+        # A real gsettings read: with the wrong libraries it can't load GNOME's settings module, yet still exits 0 and
+        # quietly uses a throwaway store (how v1.1.0 lost settings). So stderr is checked too.
+        calls = {"gsettings": ["get", "org.gnome.desktop.interface", "color-scheme"], "gnome-extensions": ["version"],
+                 "wl-copy": ["--version"], "tesseract": ["--version"]}
         ran = []
-        for n in names:
-            exe = tesseract() if n == "tesseract" else shutil.which(n)
+        for n, args in calls.items():
+            exe = tesseract() if n == "tesseract" else shutil.which(n) if os.name != "nt" else None
             if exe:
-                r = subprocess.run([exe, "version" if n == "gnome-extensions" else "--version"], capture_output=True, text=True,
-                                   timeout=30)
-                assert r.returncode == 0, f"{n} exited {r.returncode}: {r.stderr.strip()[:300]}"
+                r = subprocess.run([exe] + args, capture_output=True, text=True, timeout=30)
+                broken = re.search(r"Failed to load module|undefined symbol|symbol lookup error|not found \(required by|"
+                                   r"error while loading shared", r.stderr)
+                assert not broken and (r.returncode == 0 or "No such schema" in r.stderr), \
+                    f"{n} exited {r.returncode}: {r.stderr.strip()[:300]}"
                 ran.append(n)
         return "ran " + ", ".join(ran) if ran else "none installed"
 
