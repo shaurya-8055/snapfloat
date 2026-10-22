@@ -478,6 +478,57 @@ assert app.scroller is None and app.busy_since == 0.0
 app.scroll_start(None)
 assert app.scroller is None
 app.full_screen = real_full
+# screen recording: the commands, then start → stop → a video thumbnail (a fake recorder stands in for ffmpeg/GStreamer)
+from pathlib import Path
+stem = Path(tempfile.gettempdir()) / "Recording x"
+cmd, out = sf.record_cmd(stem)
+assert out.suffix == ".mp4" and cmd[cmd.index("-f") + 1] == "x11grab" and "yuv420p" in cmd and cmd[-1] == str(out)
+real_enc, sf.WAYLAND = sf.gst_encoder, True
+sf.gst_encoder = lambda: (["vp8enc", "!", "webmmux"], ".webm")
+try:
+    cmd, out = sf.record_cmd(stem, 7, 42)
+    assert cmd[:3] == ["gst-launch-1.0", "-e", "-q"] and "fd=7" in cmd and "path=42" in cmd
+    assert out.suffix == ".webm" and cmd[-1] == f"location={out}", "the path stays one argv item (gst-launch escapes its spaces)"
+finally:
+    sf.WAYLAND, sf.gst_encoder = False, real_enc
+
+import time
+def wait_for(cond, secs=15):
+    end = time.time() + secs
+    while not cond() and time.time() < end:
+        app.processEvents()
+        time.sleep(0.02)
+    return cond()
+
+real_cmd, errors = sf.record_cmd, []
+app.recorder.error.connect(errors.append)
+fake = "import sys; sys.stdin.read(1); open(sys.argv[1], 'wb').write(b'video')"  # like ffmpeg: "q" on stdin stops it
+sf.record_cmd = lambda stem, fd=None, node=None: ([sys.executable, "-c", fake, str(stem.with_suffix(".mp4"))], stem.with_suffix(".mp4"))
+try:
+    for t in list(app.thumbs):
+        t.dismiss()
+    app.record()
+    assert app.recorder.busy and app.record_action.text() == "Stop recording"
+    app.tray_click(sf.QSystemTrayIcon.Trigger)  # a tray click stops it
+    assert wait_for(lambda: not app.recorder.busy), "recording never finished"
+    vid = app.thumbs[-1]
+    assert vid.video and vid.path.suffix == ".mp4" and vid.path.read_bytes() == b"video" and vid.drag_file() == vid.path
+    assert vid.path.with_suffix(".png").exists() and not vid.path.with_suffix(".log").exists() and not errors
+    assert app.record_action.text() == "Record screen"
+    vid.dismiss()
+    app.reshow(vid.path)
+    assert app.thumbs[-1].path == vid.path, "a recording comes back from Recent"
+    sf.forget(vid.path)
+    assert not vid.path.exists() and not vid.path.with_suffix(".png").exists()
+    app.thumbs[-1].dismiss()
+    n = len(app.thumbs)
+    sf.record_cmd = lambda stem, fd=None, node=None: ([sys.executable, "-c", "import sys; sys.stderr.write('no screen\\n'); sys.exit(1)"],
+                                                      stem.with_suffix(".mp4"))
+    app.record()
+    assert wait_for(lambda: not app.recorder.busy)
+    assert errors == ["no screen"] and len(app.thumbs) == n, "a failed recording says why and shows nothing"
+finally:
+    sf.record_cmd = real_cmd
 
 # --self-test checks a build end to end and exits non-zero on any failure
 r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)

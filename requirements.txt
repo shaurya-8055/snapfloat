@@ -3,3 +3,5 @@
 PySide6-Essentials>=6.9,<6.10
 # QR code and barcode reading (Read QR code); SnapFloat runs without it
 zxing-cpp>=2.2,<4
+# Wayland screen recording: talks to the ScreenCast portal (pure Python)
+jeepney>=0.8

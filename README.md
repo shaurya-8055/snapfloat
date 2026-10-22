@@ -55,6 +55,7 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 | **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and marks them. Click any you want to keep visible, `Enter` blurs the rest |
 | **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR, in the languages you pick in Settings) |
 | **Float on screen** | Right-click → *Float on screen*: the shot stays on top of your windows as a reference. Drag to move, scroll to zoom, `Ctrl`+scroll to fade, double-click to close |
+| **Screen recording** | Tray → *Record screen*, then click the tray icon to stop: the video floats in the corner like a screenshot, ready to drag into a chat. Wayland: pick a screen or window in GNOME's dialog (needs `gstreamer1.0-pipewire`; MP4 with `gstreamer1.0-plugins-bad`, else WebM). Windows/X11: needs `ffmpeg` |
 | **Read QR codes** | Right-click → *Read QR code*: the link or text in a QR code or barcode is copied |
 | **Magnifier** | Markup tool `M`: a 2× zoom bubble for small details (it never reveals what you blurred) |
 | **Blur** | A real redaction tool. Mac markup has no blur |
