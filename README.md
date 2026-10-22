@@ -78,12 +78,14 @@ scoop bucket add snapfloat https://github.com/shaurya-8055/scoop-bucket
 scoop install snapfloat
 ```
 To update: quit SnapFloat from the tray first (Scoop won't replace a running app), then `scoop update snapfloat`.
-**Or by hand:**
+**With the installer:** download `SnapFloat-Setup.exe` from [Releases](https://github.com/shaurya-8055/snapfloat/releases) and run it. No admin rights needed. It adds a Start menu entry, and *Settings → Apps* uninstalls it completely (shortcuts, autostart and settings included). Running a newer installer updates it in place.
+
+**Or the portable exe:**
 1. Download `SnapFloat.exe` from [Releases](https://github.com/shaurya-8055/snapfloat/releases).
 2. Run it. It sits in the system tray (click `^` near the clock if you don't see it).
 3. Press `Ctrl+Shift+4` and select an area.
 
-> Windows SmartScreen may warn about an unknown publisher because the exe isn't code-signed. Click **More info → Run anyway**, or [build it yourself](#build-from-source).
+> Windows SmartScreen may warn about an unknown publisher because the installer and exe aren't code-signed. Click **More info → Run anyway**, or [build it yourself](#build-from-source).
 
 ### Linux: AppImage (any distro, no install)
 1. Download `SnapFloat-x86_64.AppImage` from [Releases](https://github.com/shaurya-8055/snapfloat/releases).

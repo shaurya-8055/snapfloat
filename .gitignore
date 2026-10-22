@@ -6,3 +6,4 @@ dist/
 AppDir/
 appimagetool
 appimage-runtime
+packaging/snapfloat.ico
