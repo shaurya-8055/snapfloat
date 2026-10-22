@@ -54,6 +54,7 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 |---|---|
 | **Hide private info, one click** | In markup, the 👁 button finds emails, phone numbers, OTPs and card/account numbers and marks them. Click any you want to keep visible, `Enter` blurs the rest |
 | **Copy text from a screenshot** | Right-click → *Copy text* for all of it, or in markup drag a box with the `X` tool to copy just that part (OCR, in the languages you pick in Settings) |
+| **Float on screen** | Right-click → *Float on screen*: the shot stays on top of your windows as a reference. Drag to move, scroll to zoom, `Ctrl`+scroll to fade, double-click to close |
 | **Read QR codes** | Right-click → *Read QR code*: the link or text in a QR code or barcode is copied |
 | **Magnifier** | Markup tool `M`: a 2× zoom bubble for small details (it never reveals what you blurred) |
 | **Blur** | A real redaction tool. Mac markup has no blur |
@@ -142,7 +143,7 @@ The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then b
 | Flick toward the screen edge | Dismisses it (a short flick springs back) |
 | Hover | Pauses the countdown |
 | Click the **✕** | Closes it (still available under *Recent*) |
-| Right-click | Mark up · Copy · Copy text · Read QR code · Beautify · Combine all · Open in viewer · Save · Save As · Pin · Close |
+| Right-click | Mark up · Copy · Copy text · Read QR code · Beautify · Combine all · Open in viewer · Save · Save As · Float on screen · Keep · Close |
 
 ### Tray menu
 | Item | What it does |

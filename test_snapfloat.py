@@ -342,6 +342,29 @@ sel.close()
 assert (sf.TMP.stat().st_mode & 0o777) == 0o700, oct(sf.TMP.stat().st_mode)
 assert app.cfg.autostart is True and (sf.Path.home() / ".config/autostart/snapfloat.desktop").exists()
 
+# Float on screen: its own window (titled for the GNOME extension), zooms keeping its shape, fades, Esc closes it
+for t in list(app.thumbs):
+    t.dismiss()
+app.show_shot(pix)
+app.thumbs[-1].float_on_screen()
+pin = app.pins[-1]
+assert pin.windowTitle() == "snapfloat-pin" and not app.thumbs, "the floating copy replaces the thumbnail"
+from PySide6.QtGui import QWheelEvent, QKeyEvent
+from PySide6.QtCore import QPoint
+wheel = lambda mods: pin.wheelEvent(QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(), QPoint(0, 120), Qt.NoButton, mods,
+                                                Qt.NoScrollPhase, False))
+w0 = pin.width()
+wheel(Qt.NoModifier)
+assert pin.width() > w0 and abs(pin.width() / pin.height() - 800 / 600) < 0.02
+wheel(Qt.ControlModifier)
+assert pin.opacity == 1.0, "can't go above fully opaque"
+pin.wheelEvent(QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(), QPoint(0, -360), Qt.NoButton, Qt.ControlModifier,
+                           Qt.NoScrollPhase, False))
+assert abs(pin.opacity - 0.7) < 1e-9
+pin.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+app.sendPostedEvents(None, QEvent.DeferredDelete)
+assert not app.pins, "closing frees it"
+
 # --self-test checks a build end to end and exits non-zero on any failure
 r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)
 assert r.returncode == 0 and "self-test: passed" in r.stdout, r.stdout + r.stderr

@@ -1710,7 +1710,8 @@ class Thumb(QWidget):
         m.addAction("Open in viewer", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path))))
         m.addAction(f"Save to {Path(self.app.cfg.folder).name}", self.save)
         m.addAction("Save As…", self.save_as)
-        m.addAction("Unpin" if self.pinned else "Pin (keep on screen)", self.toggle_pin)
+        m.addAction("Float on screen", self.float_on_screen)
+        m.addAction("Let it hide" if self.pinned else "Keep (don't auto-hide)", self.toggle_pin)
         m.addSeparator()
         m.addAction("Close", self.dismiss)
         m.exec(e.globalPos())
@@ -1762,6 +1763,12 @@ class Thumb(QWidget):
         self.pinned = not self.pinned
         self.update()
 
+    def float_on_screen(self):
+        w = PinWindow(self.app, self.full)
+        w.show()
+        w.activateWindow()  # so Esc closes it
+        self.dismiss()  # the floating copy takes over; the shot stays in Recent
+
     def save(self, dest=None):
         dest = Path(dest or Path(self.app.cfg.folder).expanduser() / self.path.name)
         try:
@@ -1802,6 +1809,60 @@ class Thumb(QWidget):
         self.appear.setEasingCurve(QEasingCurve.InCubic)
         self.appear.finished.connect(self.close)
         self.appear.start()
+
+
+class PinWindow(QWidget):
+    """"Float on screen": the shot in its own always-on-top window, to keep in view while you work.
+    Drag to move · scroll to zoom · Ctrl+scroll to fade · double-click or Esc to close."""
+
+    def __init__(self, app, pix):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)  # fading is painted: Wayland has no window opacity
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowTitle("snapfloat-pin")  # Wayland: the GNOME extension keeps it on top
+        self.app, self.pix, self.opacity = app, pix, 1.0
+        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        self.avail = scr.availableGeometry()
+        size = QSizeF(pix.size()) / scr.devicePixelRatio()  # a 2x screen's shot floats at the size it was on screen
+        k = min(1.0, self.avail.width() * 0.7 / size.width(), self.avail.height() * 0.7 / size.height())
+        self.aspect = size.width() / size.height()
+        self.resize((size * k).toSize())
+        self.move(self.avail.center() - self.rect().center())
+        self.setToolTip("Drag to move · scroll to zoom · Ctrl+scroll to fade · double-click or Esc to close")
+        app.pins.append(self)  # top-level windows need a Python reference, or they're collected
+        self.destroyed.connect(lambda: app.pins.remove(self))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.setOpacity(self.opacity)
+        p.drawPixmap(QRectF(self.rect()), self.pix, QRectF(self.pix.rect()))
+        p.setPen(QColor(0, 0, 0, 70))
+        p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.windowHandle().startSystemMove()  # the compositor moves it: works on Wayland too
+        elif e.button() == Qt.RightButton:
+            m = QMenu(self)
+            m.addAction("Copy", lambda: self.app.copy(self.pix))
+            m.addAction("Close", self.close)
+            m.exec(e.globalPosition().toPoint())
+
+    def mouseDoubleClickEvent(self, _):
+        self.close()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.close()
+
+    def wheelEvent(self, e):
+        steps = e.angleDelta().y() / 120
+        if e.modifiers() & Qt.ControlModifier:
+            self.opacity = max(0.2, min(1.0, self.opacity + 0.1 * steps))
+            return self.update()
+        w = max(80, min(self.avail.width(), round(self.width() * 1.1 ** steps)))
+        self.resize(w, round(w / self.aspect))
 
 
 # ---------- hotkeys ----------
@@ -2277,6 +2338,7 @@ class App(QApplication):
         self.setDesktopFileName("snapfloat")  # Wayland app_id: how the GNOME extension spots our windows
         self.setWindowIcon(icon())
         self.cfg, self.thumbs, self.recent, self.dialog, self.hotkeys = Config(), [], [], None, None
+        self.pins = []
         self.flash = self.pending = None  # keep these short-lived windows referenced while they animate
         self.busy_since, self.submenus = 0.0, []
         tmp_dir()
