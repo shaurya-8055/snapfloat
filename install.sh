@@ -15,13 +15,18 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
-# tesseract-ocr powers "Copy text" and "Hide private info"
-dpkg -s python3-venv libxcb-cursor0 tesseract-ocr >/dev/null 2>&1 || sudo apt-get install -y python3-venv libxcb-cursor0 tesseract-ocr
+# tesseract-ocr powers "Copy text" and "Hide private info"; wl-clipboard lets a background app set the clipboard on Wayland
+PKGS="python3-venv libxcb-cursor0 tesseract-ocr wl-clipboard"
+if ! dpkg -s $PKGS >/dev/null 2>&1; then
+    { sudo apt-get update -qq && sudo apt-get install -y $PKGS; } ||
+        echo "warning: couldn't install system packages (no sudo?). Install them yourself: sudo apt install $PKGS"
+fi
 mkdir -p "$DIR" "$(dirname "$BIN")" "$(dirname "$APPS")"
 cp "$SRC/snapfloat.py" "$DIR/"
 mkdir -p "$HOME/.local/share/icons/hicolor/256x256/apps"
 cp "$SRC/packaging/snapfloat.png" "$HOME/.local/share/icons/hicolor/256x256/apps/snapfloat.png"
-[ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv"
+# check pip, not python: a venv made while python3-venv was missing has python but no pip, and would stay broken
+[ -x "$DIR/venv/bin/pip" ] || python3 -m venv --clear "$DIR/venv"
 # PySide6 6.9 is pinned (newer versions draw no drag image on Wayland) but predates Python 3.14; its abi3 wheel runs fine there
 "$DIR/venv/bin/pip" install -q --upgrade --ignore-requires-python -r "$SRC/requirements.txt"
 
@@ -32,7 +37,7 @@ cat > "$APPS" <<DESKTOP
 Type=Application
 Name=SnapFloat
 Comment=Floating screenshot thumbnail you can drag into any app
-Exec=$BIN
+Exec="$BIN"
 Icon=snapfloat
 Categories=Utility;
 DESKTOP
@@ -42,7 +47,7 @@ NEED_RELOGIN=0
 if command -v gnome-extensions >/dev/null; then
     # 1.0's extension ID: drop its files (a running copy keeps working until logout); forget it once it isn't loaded
     rm -rf "$HOME/.local/share/gnome-shell/extensions/$LEGACY_UUID"
-    if ! gnome-extensions info "$LEGACY_UUID" 2>/dev/null | grep -q ACTIVE; then
+    if ! gnome-extensions info "$LEGACY_UUID" 2>/dev/null | grep -qE 'State: (ACTIVE|ENABLED)$'; then
         python3 - "$LEGACY_UUID" <<'PY'
 import ast, subprocess, sys
 cur = subprocess.run(["gsettings", "get", "org.gnome.shell", "enabled-extensions"], capture_output=True, text=True).stdout
@@ -52,6 +57,9 @@ if sys.argv[1] in cur:
 PY
     fi
     mkdir -p "$EXT"
+    if ! diff -q "$SRC/gnome-extension" "$EXT" >/dev/null 2>&1; then
+        NEED_RELOGIN=1  # GNOME keeps running the old extension code until the next login
+    fi
     cp "$SRC"/gnome-extension/* "$EXT/"
     if ! gnome-extensions enable "$UUID" 2>/dev/null; then
         # shell hasn't seen it yet (new install): mark it enabled for the next login

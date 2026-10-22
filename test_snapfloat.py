@@ -3,7 +3,8 @@ import os, sys, tempfile
 # isolate everything: a running SnapFloat's socket, temp shots, config and autostart must stay untouched
 tempfile.tempdir = tempfile.mkdtemp()  # gettempdir() is cached, so TMPDIR alone would still hit the real /tmp
 os.environ.update(QT_QPA_PLATFORM="offscreen", XDG_CURRENT_DESKTOP="", XDG_CONFIG_HOME=tempfile.mkdtemp(),
-                  XDG_RUNTIME_DIR=tempfile.mkdtemp(), HOME=tempfile.mkdtemp(), TMPDIR=tempfile.tempdir)
+                  XDG_RUNTIME_DIR=tempfile.mkdtemp(), HOME=tempfile.mkdtemp(), TMPDIR=tempfile.tempdir,
+                  XDG_SESSION_TYPE="", WAYLAND_DISPLAY="")  # never inherit the desktop's Wayland session
 sys.argv = sys.argv[:1]
 import snapfloat as sf
 assert str(sf.TMP).startswith(tempfile.tempdir), "test must never touch the real SnapFloat temp folder"
@@ -79,6 +80,9 @@ th = app.thumbs[-1]
 old_h = th.height()
 th.set_image(QPixmap.fromImage(cv.render()))
 assert th.full.size().toTuple() == (200, 150) and th.height() != old_h and QImage(str(th.path)).width() == 200
+assert th.pinned, "an edited thumbnail stays until it's used"
+assert app.clipboard().pixmap().size().toTuple() == (200, 150), "Done puts the edited version on the clipboard"
+th.pinned = False
 
 # swipe: past the threshold dismisses, short flick springs back
 th.swiping, th.swipe = True, 20
@@ -123,10 +127,142 @@ cv.cur = dict(t="ocr", a=QPointF(10, 10), b=QPointF(200, 120), r=QRectF(10, 10, 
               path=sf.QPainterPath(QPointF(10, 10)))
 cv.mouseReleaseEvent(None)
 assert picked == [QRectF(10, 10, 190, 110)] and len(cv.shapes) == before
+# ellipse, pen, spotlight
+cv.shapes.clear()
+cv.push(dict(t="ellipse", r=QRectF(100, 50, 200, 100), c="#ff3b30", w=6))
+pen = sf.QPainterPath(QPointF(20, 250))
+pen.lineTo(QPointF(120, 250))
+cv.push(dict(t="pen", path=pen, c="#0a84ff", w=6))
+out = cv.render()
+assert out.pixelColor(100, 100).red() > 200 and out.pixelColor(200, 100) == img.pixelColor(200, 100), "ellipse outline only"
+assert out.pixelColor(70, 250).blue() > 200, "pen stroke drawn"
+cv.shapes.clear()
+cv.push(dict(t="spotlight", r=QRectF(150, 100, 100, 80), c="#000", w=4))
+cv.push(dict(t="arrow", a=QPointF(20, 20), b=QPointF(120, 60), c="#ff3b30", w=6))
+out = cv.render()
+assert out.pixelColor(200, 140) == img.pixelColor(200, 140), "inside the spotlight stays untouched"
+assert out.pixelColor(380, 280).lightness() < img.pixelColor(380, 280).lightness(), "outside is darkened"
+assert out.pixelColor(70, 40).red() > 200, "marks stay bright on top of the dimming"
 nice = sf.beautify(QPixmap.fromImage(img))
 assert nice.width() > img.width() + 90 and nice.toImage().pixelColor(2, 2) != QColor("white")
 both = sf.combine([QPixmap.fromImage(img), QPixmap.fromImage(img)])
 assert both.size().toTuple() == (400, 300 * 2 + 16)
+
+# ---- audit regressions ----
+# shortcuts: "+" and named keys never break parsing (a crash here froze Windows at every launch)
+assert sf.split_keys("Ctrl+Shift++") == ["Ctrl", "Shift", "Plus"] and sf.split_keys("+") == ["Plus"] and sf.split_keys("") == []
+assert sf.WinHotkeys([], None).parse("Ctrl+Shift++") == (0x4000 | 2 | 4, 0xBB)
+assert sf.WinHotkeys([], None).parse("Ctrl+PgUp") == (0x4000 | 2, 0x21)
+assert sf.WinHotkeys([], None).parse("Shift+Print") == (0x4000 | 4, 0x2C)
+assert sf.gnome_accel("Ctrl+Shift++") == "<Control><Shift>plus" and sf.gnome_accel("Ctrl+PgUp") == "<Control>Page_Up"
+assert sf.gnome_accel("Super+F5") == "<Super>F5" and sf.gnome_accel("Shift+Print") == "<Shift>Print"
+
+# redaction keeps nothing of the content but its average colour: two different texts, same average -> same pixels
+a, b = QImage(60, 20, QImage.Format_ARGB32_Premultiplied), QImage(60, 20, QImage.Format_ARGB32_Premultiplied)
+for x in range(60):
+    for y in range(20):
+        a.setPixelColor(x, y, QColor("black") if x < 30 else QColor("white"))
+        b.setPixelColor(x, y, QColor("white") if x < 30 else QColor("black"))
+box = sf.QRect(0, 0, 60, 20)
+assert sf.pixelate(a, box) == sf.pixelate(b, box), "redaction must not depend on what's under it"
+assert sf.pixelate(a, box).size() == box.size()
+
+# private-info rules: more secrets caught, fewer harmless numbers blurred
+def private(text):
+    return any(sf.is_private_number(m, text) for m in sf.NUMBER.finditer(text)) or bool(sf.TOKEN.search(text))
+for text, want in (("Your OTP is 4821", True), ("code: 482-913", True), ("482 913", True), ("SSN 123-45-6789", True),
+                   ("key sk-live-abcdefghijklmnop1234", True), ("+91 98765 43210", True),
+                   ("2026-10-22 14:35:07", False), ("192.168.100.200", False), ("1500.00 2026", False),
+                   ("0.123456", False), ("Order #4821 2026", False)):
+    assert private(text) == want, text
+
+# overlapping spotlights stay bright where they overlap
+cv.shapes.clear()
+cv.push(dict(t="spotlight", r=QRectF(50, 50, 100, 80), c="#000", w=4))
+cv.push(dict(t="spotlight", r=QRectF(100, 70, 100, 80), c="#000", w=4))
+assert cv.render().pixelColor(125, 100) == img.pixelColor(125, 100)
+cv.shapes.clear()
+
+# editor: freed when closed, and Done waits for a running "Hide private info"
+ed2 = sf.Editor(app, QPixmap.fromImage(img), lambda p: done_calls.append(p))
+done_calls = []
+assert ed2.testAttribute(sf.Qt.WA_DeleteOnClose)
+ed2.pending = 1
+ed2.finish()
+assert ed2.finish_after_ocr and not done_calls, "Done must wait for OCR"
+ed2.canvas.push(dict(t="blur", r=QRectF(0, 0, 50, 50), c="#000", w=1))  # what the OCR result would add
+ed2.pending = 0
+ed2.finish()
+assert len(done_calls) == 1, "and finish once it's back, with the blur"
+crop_ed = sf.Editor(app, QPixmap.fromImage(img), lambda p: None)
+crop_ed.canvas.push(dict(t="crop", r=QRectF(10, 10, 50, 50), c="#000", w=1))
+assert crop_ed.canvas.render().size().toTuple() == (50, 50) and crop_ed.canvas.render(crop=False).size() == img.size()
+
+# a 6th screenshot never closes one that's being edited or is pinned
+for t in list(app.thumbs):
+    t.dismiss()
+small = QPixmap(100, 80)
+small.fill(QColor("green"))
+app.show_shot(small)
+kept = app.thumbs[-1]
+kept.pinned = True
+for _ in range(sf.MAX_THUMBS):
+    app.show_shot(small)
+assert kept in app.thumbs, "pinned thumbnail evicted"
+kept.pinned = False
+
+# one capture at a time; every capture result (even a cancel) frees it again
+app.busy_since = 0.0
+assert app.start_capture() and not app.start_capture()
+app.show_shot(None)
+assert app.start_capture()
+app.show_shot(None)
+
+# combine: a 1x shot next to a 2x one comes out at the same visual scale
+one, two = QPixmap(100, 50), QPixmap(200, 100)
+one.fill(QColor("red"))
+two.fill(QColor("blue"))
+two.setDevicePixelRatio(2)
+assert sf.combine([one, two]).width() == 200
+
+# autostart Exec= quoting (spaces, quotes, $, %)
+assert sf.desktop_exec(["/home/a b/Snap Float.AppImage"]) == '"/home/a b/Snap Float.AppImage"'
+assert sf.desktop_exec(["/x/snapfloat", "--region"]) == "/x/snapfloat --region"
+assert sf.desktop_exec(['/a"b$c%d']) == '"/a\\"b\\$c%%d"'
+
+# temp folder: refuse one someone else planted (symlink), and purge leaves folders alone / never creates it
+real_tmp = sf.TMP
+victim = sf.Path(tempfile.mkdtemp())
+(victim / "keep.txt").write_text("x")
+planted = sf.Path(tempfile.mkdtemp()) / "planted"
+planted.symlink_to(victim)
+victim.chmod(0o755)
+sf.TMP = planted
+assert sf.tmp_dir() != planted, "a planted symlink must be refused"
+assert (victim.stat().st_mode & 0o777) == 0o755, "the folder it points to must not be re-permissioned"
+assert not sf.TMP.is_symlink() and (sf.TMP.stat().st_mode & 0o777) == 0o700
+(sf.TMP / "sub").mkdir()
+sf.purge()
+assert (sf.TMP / "sub").is_dir()
+gone = sf.Path(tempfile.mkdtemp()) / "nope"
+sf.TMP = gone
+sf.purge()
+assert not gone.exists(), "purge must not create the folder (it ran after uninstall had removed it)"
+sf.TMP = real_tmp
+assert (victim / "keep.txt").exists(), "a planted symlink must never be emptied"
+
+# Selector: a drag starting exactly at the monitor's top-left pixel still selects
+got = []
+sel = sf.Selector(app.primaryScreen(), got.append)
+class Ev:
+    def __init__(self, x, y): self.p = QPointF(x, y)
+    def position(self): return self.p
+    def button(self): return sf.Qt.LeftButton
+sel.mousePressEvent(Ev(0, 0))
+sel.mouseMoveEvent(Ev(40, 30))
+sel.mouseReleaseEvent(Ev(40, 30))
+assert got and got[0] is not None, "selection starting at (0, 0) was ignored"
+sel.close()
 
 # private temp folder, start-at-login default
 assert (sf.TMP.stat().st_mode & 0o777) == 0o700, oct(sf.TMP.stat().st_mode)
