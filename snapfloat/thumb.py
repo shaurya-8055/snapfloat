@@ -2,7 +2,7 @@
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QMimeData, QRect, QRectF, QSizeF, Qt, QUrl,
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QMimeData, QRect, QRectF, QSizeF, Qt, QTimer, QUrl,
                             QVariantAnimation)
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QDrag, QGuiApplication, QImage, QPainter, QPainterPath,
                            QPen, QPixmap)
@@ -19,6 +19,14 @@ from .effects import beautify
 from .ocr import ocr_message, read_qr, run_ocr, tesseract
 from .record import VIDEO
 from .system import APP
+
+
+class Menu(QMenu):
+    """A context menu whose items run once it has closed. Several close the window the menu belongs to (Close, Float on
+    screen); run from inside the open menu, that freed the menu under itself on Wayland and crashed the app."""
+
+    def addAction(self, text, fn):
+        return super().addAction(text, lambda: QTimer.singleShot(0, self.parent(), fn))  # dropped if the owner is gone
 
 
 class Thumb(QWidget):
@@ -218,7 +226,7 @@ class Thumb(QWidget):
 
     def contextMenuEvent(self, e):
         self.hold()
-        m = QMenu(self)
+        m = Menu(self)
         if not self.video:
             m.addAction("Mark up…", self.markup)
             m.addAction("Copy", lambda: self.app.copy(self.full, self.path))
@@ -372,10 +380,11 @@ class PinWindow(QWidget):
         if e.button() == Qt.LeftButton:
             self.windowHandle().startSystemMove()  # the compositor moves it: works on Wayland too
         elif e.button() == Qt.RightButton:
-            m = QMenu(self)
+            m = Menu(self)
             m.addAction("Copy", lambda: self.app.copy(self.pix))
             m.addAction("Close", self.close)
             m.exec(e.globalPosition().toPoint())
+            m.deleteLater()
 
     def mouseDoubleClickEvent(self, _):
         self.close()

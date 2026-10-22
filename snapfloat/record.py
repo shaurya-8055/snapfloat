@@ -3,7 +3,7 @@ import os, shutil, signal, subprocess, threading, time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPixmap, QPolygonF
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap, QPolygonF
 try:
     import jeepney  # Wayland screen recording talks to the ScreenCast portal with it; optional when running from source
 except ImportError:
@@ -29,26 +29,37 @@ def record_missing():
 def gst_encoder():
     """H.264 in MP4 (plays everywhere) with openh264 from plugins-bad, else VP8 in WebM (always in plugins-good).
     Not x264enc: it fails on a window with an odd width or height, which openh264 crops to even."""
-    for name, tail, ext in (("openh264enc", "video/x-raw,format=I420 ! openh264enc ! h264parse ! mp4mux", ".mp4"),
+    for name, tail, ext in (("openh264enc", "video/x-raw,format=I420 ! openh264enc complexity=low ! h264parse ! mp4mux", ".mp4"),
                             ("vp8enc", "vp8enc deadline=1 cpu-used=8 ! webmmux", ".webm")):
         if subprocess.run(["gst-inspect-1.0", "--exists", name]).returncode == 0:
             return tail.split(), ext
     raise RuntimeError("GStreamer has no video encoder (install gstreamer1.0-plugins-good)")
 
 
+FPS = 24  # plenty for screen recordings, and a fifth less work than 30
+
+
 def record_cmd(stem, fd=None, node=None):
-    """The recorder command and the file it writes. Wayland: GStreamer on the portal's PipeWire stream; else ffmpeg."""
+    """The recorder command and the file it writes. Wayland: GStreamer on the portal's PipeWire stream; else ffmpeg.
+
+    Video is recorded at the screen's logical size (what you see; half the pixels each way on a 2x screen): encoding
+    every physical pixel took more than a whole CPU core on a 3456x1944 screen and still fell behind; this takes a third."""
+    scr = max(QGuiApplication.screens(), key=lambda s: s.size().width() * s.size().height())
     if WAYLAND:
         tail, ext = gst_encoder()
         path = stem.with_suffix(ext)
-        # -e: Ctrl+C (SIGINT) ends the stream cleanly, so the file is finalized; each argv item is escaped by gst-launch
+        fit = f"video/x-raw,width=[2,{scr.size().width()}],height=[2,{scr.size().height()}],pixel-aspect-ratio=1/1"
+        # -e: Ctrl+C (SIGINT) ends the stream cleanly, so the file is finalized; each argv item is escaped by gst-launch.
+        # Shrink (keeping the shape) before converting colours: both cost per pixel.
         return (["gst-launch-1.0", "-e", "-q", "pipewiresrc", f"fd={fd}", f"path={node}", "do-timestamp=true", "!",
+                 "videorate", "drop-only=true", f"max-rate={FPS}", "!", "videoscale", "!", fit, "!",
                  "videoconvert", "!", "queue", "!"] + tail + ["!", "filesink", f"location={path}"], path)
     path = stem.with_suffix(".mp4")
+    d = scr.devicePixelRatio()
     grab = ["-f", "gdigrab", "-i", "desktop"] if os.name == "nt" else ["-f", "x11grab", "-i", os.environ.get("DISPLAY", ":0")]
-    return ([shutil.which("ffmpeg") or "ffmpeg", "-y", "-loglevel", "error", "-nostats", "-framerate", "30"] + grab +
-            ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(path)],
-            path)
+    return ([shutil.which("ffmpeg") or "ffmpeg", "-y", "-loglevel", "error", "-nostats", "-framerate", str(FPS)] + grab +
+            ["-vf", f"scale=trunc(iw/{d:g}/2)*2:trunc(ih/{d:g}/2)*2", "-c:v", "libx264", "-preset", "veryfast",
+             "-pix_fmt", "yuv420p", str(path)], path)
 
 
 def screencast_portal():

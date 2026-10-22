@@ -42,6 +42,8 @@ LEGACY_TMP = Path(tempfile.gettempdir()) / f"snapfloat-{getpass.getuser()}"  # w
 
 PRINT_MARK = (Path(os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
               / "snapfloat" / "took-printscreen")  # what the PrtSc keys were before SnapFloat took them
+LOG = ((Path(os.environ["LOCALAPPDATA"]) if os.name == "nt" and os.environ.get("LOCALAPPDATA") else
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")) / "snapfloat" / "snapfloat.log")
 
 
 if os.environ.get("APPIMAGE"):  # inside an AppImage, sys.executable sits in a mount whose path changes every launch
@@ -158,7 +160,8 @@ def uninstall(quit_running=True):
             except OSError:
                 pass
         shutil.rmtree(PRINT_MARK.parent, ignore_errors=True)
-    else:
+    shutil.rmtree(LOG.parent, ignore_errors=True)
+    if os.name != "nt":
         if shutil.which("gsettings"):
             keys = "org.gnome.settings-daemon.plugins.media-keys"
             paths = gsettings_list(keys, "custom-keybindings")
