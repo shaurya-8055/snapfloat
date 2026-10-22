@@ -387,6 +387,97 @@ ev("mouseReleaseEvent", 60, 50)
 assert abs(got[-1].width() - 50 * d) <= d and abs(got[-1].height() - 40 * d) <= d, "a drag still captures the region"
 sel.close()
 assert sf.windows_under_desktop() == [] or os.name == "nt"
+# scrolling capture: frames of a scrolled page stitch back into exactly the page
+import random as _random
+from PySide6.QtGui import QPainter as _QP
+from PySide6.QtCore import QRect
+
+
+def page(w, h, seed):
+    """A fake web page: random text-like blocks with blank gaps (blank rows match everywhere: the hard case)."""
+    img = QImage(w, h, QImage.Format_RGB32)
+    img.fill(QColor("white"))
+    rnd, p = _random.Random(seed), _QP(img)
+    for y in range(0, h, 18):
+        if 1450 <= y < 1600:  # a long blank stretch
+            continue
+        for _ in range(rnd.randint(1, 4)):
+            p.fillRect(rnd.randrange(w - 40), y + rnd.randrange(6), rnd.randint(5, 40), rnd.randint(3, 10),
+                       QColor(rnd.randrange(256), rnd.randrange(256), rnd.randrange(256)))
+    p.end()
+    return img
+
+
+W, VIEW, HEAD, FOOT = 300, 330, 40, 30
+content = page(W, 3000, 1)
+header, footer = page(W, HEAD, 2), page(W, FOOT, 3)
+
+
+def frame(top):
+    img = QImage(W, HEAD + VIEW + FOOT, QImage.Format_RGB32)
+    p = _QP(img)
+    p.drawImage(0, 0, header)
+    p.drawImage(0, HEAD, content, 0, top, W, VIEW)
+    p.drawImage(0, HEAD + VIEW, footer)
+    p.end()
+    return img
+
+
+# duplicates, a scroll back up (290), a jump too far to match (2600 after 2000), two frames ending in blank rows (1150, 1250)
+tops = [0, 0, 37, 150, 151, 300, 290, 480, 780, 1050, 1150, 1250, 1400, 1400, 1700, 2000, 2600, 2300, 2600, 2670]
+frames = [frame(t) for t in tops]
+expect = QImage(W, HEAD + 3000 + FOOT, QImage.Format_RGB32)
+ep = _QP(expect)
+ep.drawImage(0, 0, header)
+ep.drawImage(0, HEAD, content)
+ep.drawImage(0, HEAD + 3000, footer)
+ep.end()
+st = sf.Stitcher(frames[0])
+added = [st.add(f) for f in frames[1:]]
+assert added == [False, True, True, True, True, False, True, True, True, True, True, True, False, True, True, False, True,
+                 True, True], added
+assert st.foot == FOOT, "blank rows that happened to stay put aren't mistaken for the footer"
+assert sf.stitch(frames) == expect, "stitched page differs from the original"
+assert sf.stitch(frames[:1]) == frames[0], "a single frame is returned as is"
+assert sf.stitch([frame(500)] * 3) == frame(500), "no scrolling: just the one frame"
+plain = [frame(t) for t in (0, 200, 400)]  # no header/footer at all
+for i, f in enumerate(plain):
+    plain[i] = f.copy(0, HEAD, W, VIEW)
+assert sf.stitch(plain) == content.copy(0, 0, W, 400 + VIEW)
+
+# locate finds the picked area in a full screenshot, pixel exact
+full = page(800, 600, 4)
+assert sf.locate(full.copy(123, 45, 200, 100), full) == QRect(123, 45, 200, 100)
+assert sf.locate(page(200, 100, 5), full) is None
+
+# the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page
+for t in list(app.thumbs):
+    t.dismiss()
+feed = iter(frames[1:6] + [None] + frames[6:])
+sc = sf.ScrollCapture(app, frames[0], lambda then: then(next(feed)))
+assert sc.timer.isActive() and not sc.hide_to_grab
+for _ in range(len(frames)):
+    sc.tick()
+assert sc.label.text().endswith(f"{sum(added) + 1} parts")
+sc.done()
+assert sc.timer is None and app.scroller is None
+assert app.thumbs[-1].full.toImage().convertToFormat(QImage.Format_RGB32) == expect
+app.thumbs[-1].dismiss()
+
+# start-up: the area is found in a full screenshot and later grabs are cropped to it; Cancel ends the capture
+real_full = app.full_screen
+app.full_screen = lambda then: then(full)
+app.busy_since = 1.0
+app.scroll_start(full.copy(123, 45, 200, 100))
+sc = app.scroller
+got = []
+sc.take(got.append)
+assert got[0] == full.copy(123, 45, 200, 100)
+sc.finish(None)
+assert app.scroller is None and app.busy_since == 0.0
+app.scroll_start(None)
+assert app.scroller is None
+app.full_screen = real_full
 
 # --self-test checks a build end to end and exits non-zero on any failure
 r = sf.subprocess.run([sys.executable, sf.__file__, "--self-test"], capture_output=True, text=True, timeout=120)
