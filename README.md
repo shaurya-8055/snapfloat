@@ -119,7 +119,7 @@ The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then b
 | `/path/to/SnapFloat-x86_64.AppImage --region` | `PrtSc` or `Ctrl+Shift+4` |
 | `/path/to/SnapFloat-x86_64.AppImage --screen` | `Shift+PrtSc` or `Ctrl+Shift+3` |
 
-(Running from source instead: see [Build from source](#build-from-source), then use `/path/to/.venv/bin/python /path/to/snapfloat.py --region`.)
+(Running from source instead: see [Build from source](#build-from-source), then use `/path/to/.venv/bin/python -m snapfloat --region` from the repo folder.)
 
 ### Requirements
 - Python 3.9+ (not needed for the Windows exe)
@@ -226,7 +226,7 @@ Settings are stored in `~/.config/snapfloat/snapfloat.conf` (Linux) or the regis
 ### Linux on Wayland (Ubuntu, Fedora, …)
 Wayland is stricter than X11, which is the main reason a tool like this didn't exist before:
 - **Capturing:** apps can't read the screen directly, so SnapFloat asks the desktop's own screenshot UI (via `xdg-desktop-portal`). That UI saves into `~/Pictures`, and SnapFloat immediately moves the file out to its temp folder.
-- **Placement:** Wayland doesn't let apps position their windows or keep them on top. The bundled GNOME Shell extension (`gnome-extension/`) does that for SnapFloat's thumbnails. It touches only windows titled `snapfloat-thumb …`, and it also stops thumbnails from taking focus away from the app you're typing in. Without it, thumbnails still work but open wherever GNOME places them.
+- **Placement:** Wayland doesn't let apps position their windows or keep them on top. The bundled GNOME Shell extension (`snapfloat/gnome-extension/`) does that for SnapFloat's thumbnails. It touches only windows titled `snapfloat-thumb …`, and it also stops thumbnails from taking focus away from the app you're typing in. Without it, thumbnails still work but open wherever GNOME places them.
 - **Shortcuts:** apps can't grab global keys, so SnapFloat registers GNOME custom shortcuts that run `snapfloat --region` / `--screen`.
 
 **The `PrtSc` key** is SnapFloat's by default (Settings → *Print Screen key*). Region capture still opens GNOME's own screenshot UI; SnapFloat just keeps the result out of your Screenshots folder.
@@ -264,14 +264,14 @@ Uninstalling also gives the `PrtSc` keys back exactly as they were, and removes 
 ```sh
 git clone https://github.com/shaurya-8055/snapfloat && cd snapfloat
 python3 -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install --ignore-requires-python -r requirements.txt   # see the note in requirements.txt
-python snapfloat.py
+pip install --ignore-requires-python -e .   # see the PySide6 note in pyproject.toml
+python -m snapfloat
 ```
 
 **Windows exe:**
 ```sh
 pip install pyinstaller
-pyinstaller --onefile --noconsole --name SnapFloat snapfloat.py   # → dist/SnapFloat.exe
+pyinstaller --onefile --noconsole --name SnapFloat --paths . snapfloat/__main__.py   # → dist/SnapFloat.exe
 ```
 
 **AppImage:** `bash packaging/build-appimage.sh` (with Python 3.12) → `dist/SnapFloat-x86_64.AppImage`
@@ -280,12 +280,25 @@ pyinstaller --onefile --noconsole --name SnapFloat snapfloat.py   # → dist/Sna
 
 ## Project structure
 ```
-snapfloat.py              the whole app: capture, thumbnail, markup editor, settings, hotkeys, tray
-gnome-extension/          GNOME Shell extension: corner placement + focus handling on Wayland
+snapfloat/
+  __main__.py             command line; only the standard library loads until Qt is needed (fast hotkeys)
+  system.py               paths, the running-instance socket, uninstall (standard library only)
+  common.py               settings, constants, theme, clipboard
+  app.py                  the tray app: capture flow, thumbnails, Recent, --self-test
+  capture.py              screenshots: desktop portal (Wayland), region/window selector (Windows/X11)
+  scroll.py               scrolling capture: stitches frames of a scrolling area
+  record.py               screen recording (ScreenCast portal + GStreamer, or ffmpeg)
+  thumb.py                the floating thumbnail; Float on screen
+  editor.py, draw.py      the markup editor; drawing and hit-testing the marks
+  ocr.py, effects.py      Tesseract text, private-info detection, QR codes; Beautify and Combine
+  hotkeys.py              global shortcuts, GNOME keybindings and extension, autostart
+  settings.py             the Settings window
+  gnome-extension/        GNOME Shell extension: corner placement, keeping windows on top, focus handling on Wayland
+pyproject.toml            package metadata and dependencies
 install.sh                Linux installer / updater / uninstaller
 packaging/                icon, desktop entry, AppImage build script
 test_snapfloat.py         smoke test (runs without a display)
-.github/workflows/        on a version tag: builds the Windows exe and the Linux AppImage for the release
+.github/workflows/        CI on every push; on a version tag, builds and smoke-tests the exe, installer and AppImage
 ```
 
 ## Contributing
@@ -300,12 +313,12 @@ Contributions are welcome: bug reports, fixes, and features from the roadmap.
 1. Fork, then create a branch: `git checkout -b fix-something`
 2. Set up a dev environment as in [Build from source](#build-from-source)
 3. Run the smoke test: `python test_snapfloat.py` (it must print `ok`)
-4. If you touched the GNOME extension, check its syntax: `node --input-type=module --check < gnome-extension/extension.js`
+4. If you touched the GNOME extension, check its syntax: `node --input-type=module --check < snapfloat/gnome-extension/extension.js`
 5. Test it for real on your platform. Say in the PR what you tested on (e.g. "Ubuntu 26.04 GNOME Wayland, Windows 11")
 6. Open a pull request with a short description of the why
 
 **Code style**
-- Keep it small. SnapFloat is intentionally one file with one dependency (PySide6). Please discuss new dependencies in an issue first.
+- Keep it small: a few focused modules, few dependencies (PySide6; zxing-cpp and jeepney are optional). Please discuss new dependencies in an issue first.
 - Match the surrounding code: PEP 8, ~120-character lines, short comments that explain *why*.
 - Everything must keep working on Windows, X11 and Wayland. Gate platform-specific code with `os.name == "nt"` or `WAYLAND`.
 - UI work must stay smooth. Draw expensive things once (see `Thumb.render_card`) and only fade or move them in animation frames.

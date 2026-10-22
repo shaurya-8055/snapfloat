@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build dist/SnapFloat-x86_64.AppImage. Run from the repo root with Python 3.12 (CI does this on ubuntu-22.04).
 set -euo pipefail
-python -m pip install -q -r requirements.txt pyinstaller
-pyinstaller --noconfirm --onedir --windowed --name snapfloat --add-data "gnome-extension:gnome-extension" snapfloat.py
+python -m pip install -q . pyinstaller
+pyinstaller --noconfirm --onedir --windowed --name snapfloat --paths . \
+    --add-data "snapfloat/gnome-extension:gnome-extension" snapfloat/__main__.py
 rm -rf AppDir && mkdir -p AppDir && cp -r dist/snapfloat/. AppDir/
 cp packaging/snapfloat.desktop packaging/snapfloat.png AppDir/
 ln -sf snapfloat.png AppDir/.DirIcon
