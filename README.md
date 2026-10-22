@@ -63,7 +63,7 @@ Things SnapFloat does that the macOS screenshot thumbnail doesn't:
 | **Spotlight** | Markup tool `S`: darken everything except the part that matters |
 | **Beautify** | Right-click → *Beautify*: gradient background, rounded corners and shadow, ready for social media |
 | **Combine** | Right-click → *Combine all into one*: several screenshots become one image to send |
-| **Scrolling capture** | Tray → *Scrolling capture*: pick an area, then scroll through it; SnapFloat stitches a long page into one image (sticky headers and footers appear once). On Wayland press *Add* after each scroll |
+| **Scrolling capture** | Tray → *Scrolling capture*: the screen freezes, drag the area, then scroll through it; SnapFloat stitches a long page into one image (sticky headers and footers appear once). On Wayland press *Add* after each scroll |
 | **Drag all at once** | Hold `Shift` while dragging: every visible screenshot goes in one drop |
 | **Recent** | Tray → *Recent*: grab a screenshot again after its thumbnail is gone |
 | **Smaller files** | Send a compact JPG instead of a huge PNG |
@@ -154,7 +154,7 @@ The [AppImage](#linux-appimage-any-distro-no-install) is the easiest way. Then b
 | Item | What it does |
 |---|---|
 | Capture region / Capture screen | Same as the shortcuts |
-| Scrolling capture | Pick an area, then scroll slowly (Windows/X11 grab it automatically; on Wayland press *Add* after each scroll). *Done* stitches it into one tall screenshot |
+| Scrolling capture | The screen freezes: drag the area that scrolls, then scroll slowly (Windows/X11 grab it automatically; on Wayland press *Add* after each scroll). *Done* stitches it into one tall screenshot |
 | Capture after… | 3, 5 or 10 second countdown, then a region capture. Click the ring to cancel |
 | Recent | The last 10 screenshots of this session. Click one to bring its thumbnail back and drag it again |
 
