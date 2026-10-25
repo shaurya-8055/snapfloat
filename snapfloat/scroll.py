@@ -3,7 +3,7 @@ import sys, threading
 
 from PySide6.QtCore import QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from .common import QSS, themed, WAYLAND
@@ -210,8 +210,6 @@ class ScrollCapture(QWidget):
         themed(self, QSS)
         self.setAttribute(Qt.WA_TranslucentBackground)  # only the rounded card shows
         card = QFrame(objectName="card")
-        self.fade = QGraphicsOpacityEffect(card, opacity=1.0)  # see tick()
-        card.setGraphicsEffect(self.fade)
         QHBoxLayout(self).addWidget(card)
         self.layout().setContentsMargins(0, 0, 0, 0)
         h = QHBoxLayout(card)
@@ -267,18 +265,18 @@ class ScrollCapture(QWidget):
             return
         self.busy = True
         if self.hide_to_grab:
-            # Turn see-through rather than hide: GNOME fades a hidden window out over a few hundred ms, so it was still
-            # in every screenshot (over the very area being captured, where GNOME puts it) and no part could join.
-            self.fade.setOpacity(0.0)
-            self.repaint()
-            QTimer.singleShot(150, lambda: self.take(self.got))  # let the compositor show the frame without us
+            # GNOME puts this bar over the area being captured and fades a hidden window out over 150 ms: grabbing any
+            # sooner caught it in the frame (no part could join, or it showed in the result). Wait three times that.
+            self.hide()
+            QTimer.singleShot(450, lambda: self.take(self.got))
         else:
             self.take(self.got)
 
     def got(self, img):
         if not isValid(self) or not self.timer:  # finished meanwhile
             return
-        self.fade.setOpacity(1.0)  # back as soon as the screenshot is taken
+        if self.hide_to_grab:
+            self.show()  # back as soon as the screenshot is taken
         if img is None:
             return self.added("failed")
         # matching takes a few hundred ms: off the UI thread (QImage painting is thread-safe); busy until it's back
@@ -296,6 +294,8 @@ class ScrollCapture(QWidget):
     def done(self):
         if self.busy:  # a frame is still being matched: finish when it's in, never with half of it
             self.finishing = True
+            self.label.setText("Finishing…")
+            self.hint.setText("Adding the last part")
             return
         self.finish(QPixmap.fromImage(self.stitcher.result()))
 

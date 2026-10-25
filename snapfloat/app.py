@@ -31,6 +31,7 @@ from .thumb import Thumb
 class App(QApplication):
     hotkey = Signal(str)
     framed = Signal(str)  # a recording's first frame is ready (read on a worker thread)
+    written = Signal(str)  # a screenshot's PNG is on disk (saved on a worker thread)
 
     def __init__(self):
         super().__init__(sys.argv[:1])
@@ -67,6 +68,8 @@ class App(QApplication):
         self.recorder = Recorder()
         self.recorder.finished.connect(self.recorded)
         self.framed.connect(self.show_recording)
+        self.writing, self.after_write = {}, {}  # path -> its saving thread; path -> what waits for the file
+        self.written.connect(self.on_written)
         self.recorder.error.connect(lambda msg: self.tray.showMessage(APP, f"Couldn't record the screen: {msg}"))
 
         self.tray = QSystemTrayIcon(icon(), self)
@@ -157,6 +160,7 @@ class App(QApplication):
 
     def shutdown(self):
         self.recorder.shutdown()  # before the temp folder (and the video being written) goes
+        self.wait_written()  # no half-written file left behind
         purge()
 
     def hide_thumbs(self, then):
@@ -280,7 +284,41 @@ class App(QApplication):
             self.show_shot(QPixmap.fromImage(cb.image()), copy=False, capture=False)
 
     def copy(self, pix, path=None):
+        if path:
+            self.wait_written(path)  # wl-copy reads the file
         set_clipboard(pix, path)
+
+    def write(self, pix, path, then=None):
+        """Save a screenshot as PNG on a worker thread: a long scrolling capture took over a second on the UI thread,
+        freezing everything right after Done. then() runs once the file is there."""
+        key = str(path)
+        self.wait_written(key)  # one write per file at a time
+        img = pix.toImage()  # QImage, not QPixmap: safe to use off the UI thread
+        def save():
+            img.save(key, "PNG", 80)
+            try:
+                self.written.emit(key)
+            except RuntimeError:  # the app was closed meanwhile
+                pass
+        thread = threading.Thread(target=save, daemon=True)
+        self.writing[key] = thread
+        if then:
+            self.after_write.setdefault(key, []).append(then)
+        thread.start()
+
+    def on_written(self, key):
+        self.writing.pop(key, None)
+        for fn in self.after_write.pop(key, []):
+            fn()
+
+    def wait_written(self, path=None):
+        """Block until a screenshot's file (default: every one) is on disk, for what needs the file itself: a drag,
+        Open, Save, Recent, quitting. Rarely waits: the write began when the thumbnail appeared."""
+        for key in [str(path)] if path else list(self.writing):
+            thread = self.writing.get(key)
+            if thread:
+                thread.join()
+                self.on_written(key)
 
     def remember(self, path, pix):
         """Recent: the last few shots of this session, re-draggable after their thumbnail is gone."""
@@ -288,6 +326,7 @@ class App(QApplication):
         self.recent.insert(0, (path, time.strftime("%H:%M:%S"), QIcon(pix.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation))))
         for old, _, _ in self.recent[MAX_RECENT:]:
             if all(t.path != old for t in self.thumbs):
+                self.wait_written(old)  # or the write would put it back after we delete it
                 forget(old)  # ponytail: one still on screen is cleaned up on quit instead
         del self.recent[MAX_RECENT:]
         self.build_recent()
@@ -308,6 +347,7 @@ class App(QApplication):
             self.build_recent()
             return self.tray.showMessage(APP, "That screenshot is no longer available.")
         if all(t.path != path for t in self.thumbs):
+            self.wait_written(path)
             pix = QPixmap(str(path.with_suffix(".png")))  # a recording's thumbnail sits beside it
             if pix.isNull():
                 return self.tray.showMessage(APP, "That screenshot couldn't be opened.")
@@ -328,6 +368,7 @@ class App(QApplication):
         shown = {t.path for t in self.thumbs}
         for path, _, _ in self.recent:
             if path not in shown:
+                self.wait_written(path)
                 forget(path)
         self.recent = [r for r in self.recent if r[0] in shown]
         self.build_recent()
@@ -337,10 +378,11 @@ class App(QApplication):
         if capture:
             self.busy_since = 0.0
         if pix is not None and not pix.isNull():
+            clip = copy and self.cfg.copy
             if path is None:
                 path = new_path()
-                pix.save(str(path), "PNG")
-            if copy and self.cfg.copy:
+                self.write(pix, path, (lambda: self.copy(pix, path)) if clip else None)
+            elif clip:
                 self.copy(pix, path)
             self.thumbs.append(Thumb(self, path, pix))
             self.remember(path, pix)

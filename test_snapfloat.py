@@ -47,6 +47,10 @@ pix.fill(QColor("red"))
 # thumbnails stack in the corner; Recent keeps the last MAX_RECENT and deletes older files
 for _ in range(sf.MAX_RECENT + 2):
     app.show_shot(pix)
+assert app.writing, "PNGs are saved on a worker thread"
+app.wait_written()
+app.processEvents()
+assert not app.writing and not app.after_write
 assert len(app.thumbs) == sf.MAX_THUMBS, len(app.thumbs)
 assert len(app.recent) == sf.MAX_RECENT
 assert len(list(sf.TMP.glob("*.png"))) == sf.MAX_RECENT, "evicted shots must be deleted"
@@ -102,8 +106,10 @@ assert cv.render().size().toTuple() == (200, 150)
 th = app.thumbs[-1]
 old_h = th.height()
 th.set_image(QPixmap.fromImage(cv.render()))
+app.wait_written(th.path)
 assert th.full.size().toTuple() == (200, 150) and th.height() != old_h and QImage(str(th.path)).width() == 200
 assert th.pinned, "an edited thumbnail stays until it's used"
+app.wait_written()  # the edited PNG is saved on a worker thread; the clipboard follows once it's there
 assert app.clipboard().pixmap().size().toTuple() == (200, 150), "Done puts the edited version on the clipboard"
 th.pinned = False
 

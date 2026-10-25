@@ -289,9 +289,11 @@ class Thumb(QWidget):
         run_ocr(self, self.full.toImage(), False, done)  # owner = this thumbnail: dropped if it closes first
 
     def open(self):
+        self.app.wait_written(self.path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path)))
 
     def drag_file(self):
+        self.app.wait_written(self.path)  # dropped files must be complete
         if self.video or not self.app.cfg.small:
             return self.path
         jpg = self.path.with_suffix(".jpg")
@@ -318,13 +320,11 @@ class Thumb(QWidget):
     def set_image(self, pix):
         """Markup done: the thumbnail, its file, the clipboard and Recent all get the edited version."""
         self.full = pix
-        pix.save(str(self.path), "PNG")
         self.path.with_suffix(".jpg").unlink(missing_ok=True)
+        self.app.write(pix, self.path, (lambda: self.app.copy(pix, self.path)) if self.app.cfg.copy else None)
         self.build()
         self.update()
         self.app.remember(self.path, pix)
-        if self.app.cfg.copy:
-            self.app.copy(pix, self.path)
         self.pinned = True  # an edited shot is meant to be used: it stays until you drag or close it
         self.app.layout()
 
@@ -342,6 +342,7 @@ class Thumb(QWidget):
         dest = Path(dest or Path(self.app.cfg.folder).expanduser() / self.path.name)
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
+            self.app.wait_written(self.path)
             shutil.copy2(self.path, dest)
         except OSError as err:  # unplugged drive, no permission...: say so, it's still under Recent
             self.app.tray.showMessage(APP, f"Couldn't save the screenshot to {dest.parent}: {err.strerror or err}")
