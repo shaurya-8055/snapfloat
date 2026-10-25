@@ -523,6 +523,15 @@ x0 = SIDE + W - side_out.width()  # where the trimmed result starts (at most the
 assert side_out.height() == HEAD + VIEW + FOOT + 500 and 0 < x0 <= SIDE
 assert side_out.copy(SIDE - x0, HEAD, W, 500 + VIEW) == content.copy(0, 0, W, 500 + VIEW), "the list, pixel exact"
 
+# the first frame comes from the frozen screen, tagged with the screen's scale (167% here): the result must still be
+# the page at full size (it was drawn at 60%, and the rest showed leftover memory)
+hidpi = frames[0].copy()
+hidpi.setDevicePixelRatio(5 / 3)
+hs = sf.Stitcher(hidpi)
+for t in (150, 300):
+    assert hs.add(frame(t)) == A
+assert hs.result().copy(0, HEAD, W, 300 + VIEW) == content.copy(0, 0, W, 300 + VIEW), "a HiDPI first frame stitches at full size"
+
 full = page(800, 600, 4)
 
 # the capture loop: grabs while you scroll, ignores failed grabs, Done makes a thumbnail of the whole page

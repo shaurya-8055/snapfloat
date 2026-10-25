@@ -2,7 +2,7 @@
 import sys, threading
 
 from PySide6.QtCore import QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
@@ -118,12 +118,20 @@ def scroll_offset(prev, cur):
     return d, foot, moving
 
 
+def plain(img):
+    """A frame as plain pixels. The first one is cut from the frozen screen, which is tagged with the screen's scale
+    (e.g. 1.67): drawn as is, it covered only 60% of the result, and the rest showed leftover memory."""
+    img = img.convertToFormat(QImage.Format_RGB32)
+    img.setDevicePixelRatio(1)
+    return img
+
+
 class Stitcher:
     """One tall image from frames of an area taken while it scrolls. Keeps only each frame's new rows (and the rows below
     them, in case those turn out to be part of a fixed footer), never whole frames, so long pages stay small in memory."""
 
     def __init__(self, first):
-        self.first = first.convertToFormat(QImage.Format_RGB32)
+        self.first = plain(first)
         self.sig, self.parts, self.foot = signature(self.first), [], self.first.height()
         self.moved = [False] * SIG_W  # columns that scrolled at least once
         g = self.sig.convertToFormat(QImage.Format_Grayscale8)
@@ -132,7 +140,7 @@ class Stitcher:
 
     def add(self, img):
         """Adds a frame. Returns "added", or why not: "still" (not scrolled), "lost" (scrolled up, too far, or no match)."""
-        img = img.convertToFormat(QImage.Format_RGB32)
+        img = plain(img)
         if img.size() != self.first.size():
             return "lost"
         sig = signature(img)
@@ -153,6 +161,7 @@ class Stitcher:
         f = self.foot if self.parts else 0
         w, top = self.first.width(), self.first.height() - f
         out = QImage(w, self.height(), QImage.Format_RGB32)
+        out.fill(QColor("white"))  # never show whatever memory it was given, if something isn't drawn
         p = QPainter(out)
         p.drawImage(0, 0, self.first, 0, 0, w, top)
         y = top
