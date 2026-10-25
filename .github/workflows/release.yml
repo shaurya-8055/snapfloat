@@ -54,7 +54,8 @@ jobs:
         with:
           name: SnapFloat-linux-appimage
       # the programs SnapFloat starts; the self-test checks each one still runs from inside the AppImage
-      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr libglib2.0-bin gsettings-desktop-schemas dconf-gsettings-backend wl-clipboard
+      # libEGL/GL, fontconfig, xkbcommon, D-Bus: what any desktop has (an AppImage can't bundle the GPU stack)
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr libglib2.0-bin gsettings-desktop-schemas dconf-gsettings-backend wl-clipboard libegl1 libgl1 libfontconfig1 libxkbcommon0 libdbus-1-3 fonts-dejavu-core
       - run: chmod +x SnapFloat-x86_64.AppImage && ./SnapFloat-x86_64.AppImage --appimage-extract-and-run --self-test
   smoke-windows:
     needs: windows

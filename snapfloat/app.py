@@ -487,6 +487,7 @@ def self_test(report):
         p.setFont(text_font(64))
         p.drawText(30, 110, "SnapFloat 2468")
         p.end()
+        assert any(img.pixelColor(x, 85).lightness() < 128 for x in range(30, 700)), "the text didn't render (no fonts?)"
         loop, out = QEventLoop(), []
         run_ocr(None, img, False, lambda text, _scale: (out.append(text), loop.quit()))
         QTimer.singleShot(60000, loop.quit)
