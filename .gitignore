@@ -7,3 +7,4 @@ AppDir/
 appimagetool
 appimage-runtime
 packaging/snapfloat.ico
+*.egg-info/

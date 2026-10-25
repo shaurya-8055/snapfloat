@@ -23,8 +23,9 @@ class Portal(QObject):
         except (TypeError, RuntimeError):
             pass
 
-    def capture(self, interactive):
-        self.interactive = interactive
+    def capture(self, interactive, fallback=True):
+        """fallback: if a silent full-screen shot isn't allowed, open the screenshot UI instead (or report failure)."""
+        self.interactive, self.fallback = interactive, fallback
         bus = QDBusConnection.sessionBus()
         token = f"snapfloat{time.time_ns()}"
         self.path = f"/org/freedesktop/portal/desktop/request/{bus.baseService()[1:].replace('.', '_')}/{token}"
@@ -41,7 +42,7 @@ class Portal(QObject):
     @Slot("uint", "QVariantMap")
     def on_response(self, code, results):
         self._match(False)
-        if code == 2 and not self.interactive:  # silent full-screen shot refused (no permission): use the screenshot UI
+        if code == 2 and not self.interactive and self.fallback:  # silent full-screen shot refused (no permission): use the screenshot UI
             return self.capture(True)
         self.done.emit(QUrl(results.get("uri", "")).toLocalFile() if code == 0 else "")
 
@@ -125,7 +126,7 @@ class Selector(QWidget):
 
     def mouseMoveEvent(self, e):
         if self.origin is not None:
-            self.sel = QRect(self.origin, e.position().toPoint()).normalized()
+            self.sel = QRect(self.origin, e.position().toPoint()).normalized().intersected(self.rect())  # this screen only
         else:
             self.hover = self.window_at(e.position())
         self.update()

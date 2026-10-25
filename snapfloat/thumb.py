@@ -95,7 +95,7 @@ class Thumb(QWidget):
         return card
 
     def side(self):
-        return 1 if "right" in self.app.cfg.corner else -1
+        return 1 if "right" in self.app.corner else -1
 
     def set_v(self, v):
         self.v = v

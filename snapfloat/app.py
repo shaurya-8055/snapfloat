@@ -1,5 +1,5 @@
 """The tray app: capture flow, thumbnails, Recent; and --self-test."""
-import faulthandler, os, re, shutil, stat, subprocess, sys, tempfile, time
+import faulthandler, os, re, shutil, stat, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEventLoop, QLockFile, QPoint, QPointF,
@@ -20,7 +20,7 @@ from .editor import Editor
 from .effects import combine
 from .hotkeys import ensure_gnome_extension, gnome_bind, gnome_ext_problem, set_autostart, WinHotkeys
 from .ocr import run_ocr, tesseract
-from .record import poster, record_missing, Recorder
+from .record import first_frame, poster, record_missing, Recorder
 from .scroll import ScrollCapture
 from .settings import Settings
 from .system import (APP, AUTHOR, CMD, forget, free_print_key, gsettings_list, LEGACY_TMP, LOG, new_path, purge, send,
@@ -30,6 +30,7 @@ from .thumb import Thumb
 
 class App(QApplication):
     hotkey = Signal(str)
+    framed = Signal(str)  # a recording's first frame is ready (read on a worker thread)
 
     def __init__(self):
         super().__init__(sys.argv[:1])
@@ -43,7 +44,7 @@ class App(QApplication):
         self.busy_since, self.submenus = 0.0, []
         tmp_dir()
         purge()
-        self.aboutToQuit.connect(purge)
+        self.aboutToQuit.connect(self.shutdown)
         try:  # 1.0/1.1 kept shots in /tmp: clear that out, if it's really ours
             st = os.lstat(LEGACY_TMP)
             if LEGACY_TMP != tmp_dir() and stat.S_ISDIR(st.st_mode) and (os.name == "nt" or st.st_uid == os.getuid()):
@@ -65,6 +66,7 @@ class App(QApplication):
         self.clipboard().dataChanged.connect(self.on_clipboard)
         self.recorder = Recorder()
         self.recorder.finished.connect(self.recorded)
+        self.framed.connect(self.show_recording)
         self.recorder.error.connect(lambda msg: self.tray.showMessage(APP, f"Couldn't record the screen: {msg}"))
 
         self.tray = QSystemTrayIcon(icon(), self)
@@ -81,6 +83,7 @@ class App(QApplication):
 
     def apply(self):
         c = self.cfg
+        self.corner = c.corner  # read on every animation frame: keep a plain copy
         for m in self.submenus:  # menu.clear() leaves the old submenus alive
             m.deleteLater()
         self.menu.clear()
@@ -146,8 +149,15 @@ class App(QApplication):
         self.record_action.setText("Record screen")
         self.tray.setIcon(icon())
         self.tray.setToolTip(f"{APP} · made by {AUTHOR}")
-        if path:
-            self.show_shot(poster(Path(path)), Path(path), copy=False)
+        if path:  # reading its first frame can take seconds: not on the UI thread
+            threading.Thread(target=lambda: (first_frame(Path(path)), self.framed.emit(path)), daemon=True).start()
+
+    def show_recording(self, path):
+        self.show_shot(poster(Path(path)), Path(path), copy=False, capture=False)
+
+    def shutdown(self):
+        self.recorder.shutdown()  # before the temp folder (and the video being written) goes
+        purge()
 
     def hide_thumbs(self, then):
         for t in self.thumbs:
@@ -156,6 +166,8 @@ class App(QApplication):
 
     def start_capture(self):
         """One capture at a time: a second PrtSc while the first is on screen would stack two sessions."""
+        if self.scroller or self.picker:  # a scrolling capture can take minutes: busy until it ends
+            return False
         if self.busy_since and time.monotonic() - self.busy_since < 60:  # 60 s: never stuck if a reply got lost
             return False
         self.busy_since = time.monotonic()
@@ -188,6 +200,8 @@ class App(QApplication):
 
         def frozen(full):
             if full is None or full.isNull():
+                self.tray.showMessage(APP, "Scrolling capture couldn't take a screenshot. On GNOME, run install.sh once "
+                                      "(it allows SnapFloat's silent screenshots), then try again.")
                 return self.show_shot(None)
             origin, mine = QPoint(), full
             if WAYLAND and len(QGuiApplication.screens()) > 1:  # the desktop's screenshot spans every screen: just ours
@@ -223,7 +237,7 @@ class App(QApplication):
         screen), so it arrives later."""
         if WAYLAND:
             self.portal_to = then
-            return self.portal.capture(False)
+            return self.portal.capture(False, fallback=False)  # a picked region instead would break the cropping
         scr = scr or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
         then(scr.grabWindow(0).toImage())
 
@@ -263,7 +277,7 @@ class App(QApplication):
         if WAYLAND:  # not offered there, and our own wl-copy would look like "someone else copied an image"
             return
         if self.cfg.watch_clipboard and not cb.ownsClipboard() and cb.mimeData().hasImage():
-            self.show_shot(QPixmap.fromImage(cb.image()), copy=False)
+            self.show_shot(QPixmap.fromImage(cb.image()), copy=False, capture=False)
 
     def copy(self, pix, path=None):
         set_clipboard(pix, path)
@@ -297,16 +311,18 @@ class App(QApplication):
             pix = QPixmap(str(path.with_suffix(".png")))  # a recording's thumbnail sits beside it
             if pix.isNull():
                 return self.tray.showMessage(APP, "That screenshot couldn't be opened.")
-            self.show_shot(pix, path, copy=False)
+            self.show_shot(pix, path, copy=False, capture=False)
 
     def combine_all(self):
         if any(t.editor for t in self.thumbs):
             return self.tray.showMessage(APP, "Finish marking up first: combining would close the editor.")
         shots = [t for t in self.thumbs if not t.video]
+        if len(shots) < 2:  # one may have timed out while its menu was open
+            return
         pix = combine([t.full for t in shots])
         for t in shots:
             t.dismiss()
-        self.show_shot(pix)
+        self.show_shot(pix, capture=False)
 
     def clear_recent(self):
         shown = {t.path for t in self.thumbs}
@@ -316,8 +332,10 @@ class App(QApplication):
         self.recent = [r for r in self.recent if r[0] in shown]
         self.build_recent()
 
-    def show_shot(self, pix, path=None, copy=True):
-        self.busy_since = 0.0  # every capture ends here, taken or cancelled
+    def show_shot(self, pix, path=None, copy=True, capture=True):
+        """A new thumbnail. `capture`: this ends a capture (taken or cancelled), which hid the other thumbnails."""
+        if capture:
+            self.busy_since = 0.0
         if pix is not None and not pix.isNull():
             if path is None:
                 path = new_path()
@@ -331,8 +349,9 @@ class App(QApplication):
                 if victim:
                     victim.dismiss()
         self.layout()
-        for t in self.thumbs:
-            t.show()
+        if capture or not self.busy_since:  # mid-capture (thumbnails hidden), one from elsewhere waits hidden too
+            for t in self.thumbs:
+                t.show()
 
     def corner_pos(self, w, h, offset, scr=None):
         scr = scr or (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
