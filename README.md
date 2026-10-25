@@ -276,7 +276,7 @@ pyinstaller --onefile --noconsole --name SnapFloat --paths . snapfloat/__main__.
 
 **AppImage:** `bash packaging/build-appimage.sh` (with Python 3.12) → `dist/SnapFloat-x86_64.AppImage`
 
-**Releases:** push a tag like `v1.1.0`. GitHub Actions (`.github/workflows/release.yml`) builds `SnapFloat.exe` and `SnapFloat-x86_64.AppImage` and attaches both to the release. You can also run the workflow manually from the Actions tab to get them as build artifacts.
+**Releases:** push a tag like `v1.2.0`. GitHub Actions (`.github/workflows/release.yml`) builds `SnapFloat.exe`, `SnapFloat-Setup.exe` and `SnapFloat-x86_64.AppImage`, runs each one's self-test (the installer is also installed and uninstalled), and only then attaches them to the release. You can also run the workflow manually from the Actions tab to get them as build artifacts.
 
 ## Project structure
 ```
